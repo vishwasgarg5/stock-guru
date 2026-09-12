@@ -29,6 +29,23 @@ jobs:
           download_nifty500_prices(start="2018-01-01", output="data/prices.csv")
           PY
 
+      - name: Determine prediction boundary
+        env:
+          PYTHONPATH: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREDICTION_DATE=$(python - <<'PY'
+          import pandas as pd
+          prices = pd.read_csv("data/prices.csv", usecols=["date"])
+          if prices.empty:
+              raise SystemExit("No market data available")
+          print(pd.to_datetime(prices["date"]).dt.normalize().max().date().isoformat())
+          PY
+          )
+          echo "PREDICTION_DATE=${PREDICTION_DATE}" >> "$GITHUB_ENV"
+          echo "Retraining prediction boundary: ${PREDICTION_DATE}"
+
       - name: Restore latest promoted retrain
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +90,7 @@ jobs:
             --min-train-days 252 \
             --step-days 20 \
             --top-k 10 \
+            --prediction-date "${PREDICTION_DATE}" \
             --decision-output artifacts/retraining_decision.json
 
       - name: Publish retraining decision and model
