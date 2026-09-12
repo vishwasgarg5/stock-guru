@@ -1,7 +1,30 @@
 from __future__ import annotations
 
+import math
 import numpy as np
 import pandas as pd
+
+
+def _regime_portfolio_metrics(curve: pd.DataFrame) -> dict:
+    if "market_regime" not in curve.columns:
+        return {}
+    result = {}
+    for regime, group in curve.groupby("market_regime", dropna=False):
+        label = "unknown" if pd.isna(regime) else str(regime)
+        returns = group["net_return"].astype(float)
+        if returns.empty:
+            continue
+        std = returns.std(ddof=1)
+        result[label] = {
+            "days": int(len(group)),
+            "total_return": float((1.0 + returns).prod() - 1.0),
+            "average_daily_return": float(returns.mean()),
+            "annualized_volatility": float(std * np.sqrt(252)) if len(group) > 1 else 0.0,
+            "sharpe": float(returns.mean() / std * np.sqrt(252)) if len(group) > 1 and std > 0 else 0.0,
+            "win_rate": float((returns > 0).mean()),
+            "max_drawdown": float(((1.0 + returns).cumprod() / (1.0 + returns).cumprod().cummax() - 1.0).min()),
+        }
+    return result
 
 
 def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
@@ -9,7 +32,7 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
     """Backtest daily risk-approved positions using next-session close returns.
 
     Predictions must represent decisions made before the next trading session and
-    contain prediction_date, symbol, position_weight, trade and actual_close.
+    contain prediction_date, symbol, position_weight, trade, actual_close.
     """
     required = {"prediction_date", "symbol", "position_weight", "trade", "base_close", "actual_close"}
     missing = required - set(predictions.columns)
@@ -31,8 +54,12 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
         turnover = sum(abs(current.get(s, 0.0) - previous.get(s, 0.0)) for s in symbols)
         gross = float((g["position_weight"] * g["gross_return"]).sum())
         net = gross - turnover * cost
+        regime = "unknown"
+        if "market_regime" in g.columns and g["market_regime"].notna().any():
+            regime = str(g["market_regime"].dropna().iloc[0])
         daily.append({"date": date, "gross_return": gross, "turnover": turnover,
-                      "transaction_cost": turnover * cost, "net_return": net})
+                      "transaction_cost": turnover * cost, "net_return": net,
+                      "market_regime": regime})
         previous = current
 
     if not daily:
@@ -45,7 +72,6 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
     annualized_return = float(curve["equity"].iloc[-1] ** (252.0 / len(curve)) - 1.0)
     annualized_vol = float(returns.std(ddof=1) * np.sqrt(252)) if len(curve) > 1 else 0.0
     sharpe = float(returns.mean() / returns.std(ddof=1) * np.sqrt(252)) if len(curve) > 1 and returns.std(ddof=1) > 0 else 0.0
-    winning = returns[returns > 0]
 
     result = {
         "days": int(len(curve)),
@@ -60,6 +86,7 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
         "average_turnover": float(curve["turnover"].mean()),
         "total_transaction_cost": float(curve["transaction_cost"].sum()),
         "trading_days_with_positive_return": int((returns > 0).sum()),
+        "regime_metrics": _regime_portfolio_metrics(curve),
     }
 
     if benchmark is not None and {"date", "close"}.issubset(benchmark.columns):
