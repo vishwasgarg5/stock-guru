@@ -2,13 +2,8 @@ name: Daily Stock Guru
 
 on:
   schedule:
-    # 18:30 UTC = 00:00 IST. The workflow intentionally runs after the Indian
-    # trading session and avoids intraday predictions.
     - cron: "30 18 * * 1-5"
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   daily:
@@ -24,10 +19,11 @@ jobs:
         env:
           PYTHONPATH: src
         run: python scripts/daily_pipeline.py --prices data/prices.csv --model-dir artifacts --output artifacts/daily_predictions.csv
-      - name: Persist prediction artifacts
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/prices.csv data/nifty500_universe.csv data/universe_snapshots.csv artifacts/daily_predictions.csv
-          git diff --cached --quiet || git commit -m "chore: update daily stock predictions"
-          git push
+      - name: Upload daily outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-guru-daily-${{ github.run_number }}
+          path: |
+            artifacts/daily_predictions.csv
+            data/nifty500_universe.csv
+            data/universe_snapshots.csv
