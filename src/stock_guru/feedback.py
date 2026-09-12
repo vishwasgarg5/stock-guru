@@ -2,36 +2,30 @@ from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
-from .evaluation import attach_actuals, evaluate
+from .evaluation import evaluate
 from .pipeline import Pipeline
-
-PREDICTION_COLUMNS = [
-    "prediction_date", "symbol", "rank", "model_version",
-    "pred_open", "pred_high", "pred_low", "pred_close", "base_close",
-]
 
 
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
-    """Join a prediction made for date D to the actual OHLC observed on D+1."""
+    """Join a prediction made for date D to the next available OHLC for that symbol."""
     p = predictions.copy()
     p["date"] = pd.to_datetime(p["date"]).dt.normalize()
     m = market.copy()
     m["date"] = pd.to_datetime(m["date"]).dt.normalize()
-    # The model's prediction date is D; actuals are the next available market row per symbol.
     m = m.sort_values(["symbol", "date"])
     actual = m[["date", "symbol", "open", "high", "low", "close"]].copy()
     actual["prediction_date"] = actual.groupby("symbol")["date"].shift(1)
-    actual = actual.dropna(subset=["prediction_date"])
-    actual = actual.rename(columns={
+    actual = actual.dropna(subset=["prediction_date"]).rename(columns={
         "open": "actual_open", "high": "actual_high",
         "low": "actual_low", "close": "actual_close",
     })
-    out = p.merge(actual.drop(columns=["date"]), on=["prediction_date", "symbol"], how="inner")
-    return out
+    return p.rename(columns={"date": "prediction_date"}).merge(
+        actual.drop(columns=["date"]), on=["prediction_date", "symbol"], how="inner"
+    )
 
 
 def score_labeled(labeled: pd.DataFrame) -> dict:
-    return evaluate(labeled.rename(columns={"base_close": "base_close"}))
+    return evaluate(labeled)
 
 
 def append_feedback(store: str, labeled: pd.DataFrame) -> None:
@@ -41,24 +35,17 @@ def append_feedback(store: str, labeled: pd.DataFrame) -> None:
 
 
 def retrain_candidate(raw: pd.DataFrame, validation_dates: int = 20, top_k: int = 10) -> tuple[Pipeline, dict]:
-    """Train a candidate while leaving the final validation window untouched."""
+    """Train on the pre-holdout period and evaluate predictions on untouched dates."""
     dates = sorted(pd.to_datetime(raw["date"]).dt.normalize().unique())
     if len(dates) <= validation_dates + 252:
         raise ValueError("Need more history before adaptive retraining")
     train_dates = dates[:-validation_dates]
     valid_dates = dates[-validation_dates:]
     train = raw[pd.to_datetime(raw["date"]).dt.normalize().isin(train_dates)].copy()
-    valid = raw[pd.to_datetime(raw["date"]).dt.normalize().isin(valid_dates)].copy()
     pipe = Pipeline(top_k=top_k).train(train)
-    predictions = []
-    for day in valid_dates:
-        pred = pipe.predict_date(train, str(day.date())) if day in train_dates else None
-        if pred is not None and not pred.empty:
-            predictions.append(pred)
+    predictions = [pipe.predict_date(raw, str(day.date())) for day in valid_dates]
+    predictions = [p for p in predictions if not p.empty]
     if not predictions:
-        # Validate using a compact holdout prediction generated from all pre-validation history.
-        day = str(valid_dates[0].date())
-        data_pipe = pipe.predict_date(pd.concat([train, valid.head(0)]), day)
-        predictions = [data_pipe]
+        return pipe, {}
     labeled = label_predictions(pd.concat(predictions, ignore_index=True), raw)
     return pipe, score_labeled(labeled) if not labeled.empty else {}
