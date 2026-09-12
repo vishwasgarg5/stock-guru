@@ -29,7 +29,7 @@ def predict_daily(prices_path: str, model_dir: str, prediction_date: str,
     pred = forecaster.predict(ranked)
     pred["rank"] = range(1, len(pred) + 1)
     pred.insert(0, "prediction_date", prediction_date)
-    pred["model_version"] = "initial-v1"
+    pred["model_version"] = "adaptive-v1"
     if "score" in pred:
         pred["confidence"] = pred["score"].rank(pct=True)
     return pred
