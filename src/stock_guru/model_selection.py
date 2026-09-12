@@ -21,20 +21,25 @@ def summarize(results) -> dict:
     return out
 
 
-def evaluate_candidate(
-    raw: pd.DataFrame,
-    min_train_days: int = 252,
-    step_days: int = 20,
-    top_k: int = 10,
-) -> dict:
-    return summarize(
-        run_walk_forward(
-            raw,
-            min_train_days=min_train_days,
-            step_days=step_days,
-            top_k=top_k,
-        )
-    )
+def evaluate_candidate(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> dict:
+    return summarize(run_walk_forward(raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k))
+
+
+def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20) -> dict | None:
+    """Summarize realized live-model performance for promotion gating."""
+    if feedback is None or feedback.empty:
+        return None
+    required = {"direction_correct", "return_error"}
+    if not required.issubset(feedback.columns):
+        return None
+    data = feedback.dropna(subset=["direction_correct", "return_error"])
+    if len(data) < min_rows:
+        return None
+    return {
+        "feedback_rows": int(len(data)),
+        "feedback_direction_accuracy": float(data["direction_correct"].astype(float).mean()),
+        "feedback_return_mae": float(data["return_error"].abs().mean()),
+    }
 
 
 def _metric(metrics: dict, key: str, default: float) -> float:
@@ -46,46 +51,31 @@ def _metric(metrics: dict, key: str, default: float) -> float:
     return value if math.isfinite(value) else default
 
 
-def should_promote(
-    old: dict | None,
-    new: dict,
-    rmse_tolerance: float = 0.0,
-    ranking_tolerance: float = 0.0,
-) -> bool:
-    """Promote only when the candidate strictly improves forecasting and does not regress.
+def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
+                   ranking_tolerance: float = 0.0, feedback: dict | None = None) -> bool:
+    """Promote only after validation improvement and live-feedback sanity checks."""
+    old_rmse = _metric(old, "pred_close_rmse", float("inf")) if old else float("inf")
+    old_direction = _metric(old, "close_direction_accuracy", 0.0) if old else 0.0
+    new_rmse = _metric(new, "pred_close_rmse", float("inf"))
+    new_direction = _metric(new, "close_direction_accuracy", 0.0)
 
-    Missing ranking metrics are ignored for backward compatibility with older
-    metric files. Once ranking metrics exist, the candidate must not regress
-    on top-K excess return or positive-return precision.
-    """
+    required_direction = old_direction
+    if feedback is not None:
+        required_direction = max(required_direction, _metric(feedback, "feedback_direction_accuracy", 0.0))
+
+    if not (new_rmse < old_rmse - rmse_tolerance and new_direction >= required_direction):
+        return False
     if old is None:
         return True
 
-    old_rmse = _metric(old, "pred_close_rmse", float("inf"))
-    new_rmse = _metric(new, "pred_close_rmse", float("inf"))
-    old_direction = _metric(old, "close_direction_accuracy", 0.0)
-    new_direction = _metric(new, "close_direction_accuracy", 0.0)
-
-    # Equality is not an improvement. A positive tolerance additionally
-    # requires the candidate to beat the incumbent by more than that margin.
-    forecast_ok = new_rmse < old_rmse - rmse_tolerance and new_direction >= old_direction
-    if not forecast_ok:
-        return False
-
-    ranking_keys = ["top_k_excess_return", "precision_at_k"]
-    for key in ranking_keys:
+    for key in ["top_k_excess_return", "precision_at_k"]:
         if key in old and key in new:
-            old_value = _metric(old, key, float("-inf"))
-            new_value = _metric(new, key, float("-inf"))
-            if new_value < old_value - ranking_tolerance:
+            if _metric(new, key, float("-inf")) < _metric(old, key, float("-inf")) - ranking_tolerance:
                 return False
-
     return True
 
 
 def save_metrics(model_dir: str | Path, metrics: dict) -> None:
     path = Path(model_dir)
     path.mkdir(parents=True, exist_ok=True)
-    (path / "walk_forward_metrics.json").write_text(
-        json.dumps(metrics, indent=2), encoding="utf-8"
-    )
+    (path / "walk_forward_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
