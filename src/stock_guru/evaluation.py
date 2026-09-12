@@ -18,10 +18,7 @@ def _ndcg(scores: np.ndarray, relevance: np.ndarray, k: int) -> float:
 
 
 def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
-    """Measure cross-sectional stock-selection quality for each prediction date.
-
-    The input should contain the ranked universe, not only the selected top-k names.
-    """
+    """Measure cross-sectional stock-selection quality for each prediction date."""
     required = {"symbol", "actual_close", "base_close"}
     if not required.issubset(predictions.columns):
         return {}
@@ -48,7 +45,7 @@ def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
         excess.append(top_mean - universe_mean)
         relevance = g["actual_return"].to_numpy()
         relevance = relevance - relevance.min() + 1e-12
-        scores = (ordered[score_col].to_numpy() if score_col else -ordered["rank"].to_numpy())
+        scores = ordered[score_col].to_numpy() if score_col else -ordered["rank"].to_numpy()
         ndcgs.append(_ndcg(scores, relevance, k))
 
     if not precisions:
@@ -60,6 +57,30 @@ def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
         "top_k_excess_return": float(np.mean(excess)),
         "ndcg_at_k": float(np.mean(ndcgs)),
     }
+
+
+def _grouped_forecast_metrics(predictions: pd.DataFrame) -> dict:
+    """Compute forecasting metrics by market regime without using future features."""
+    if "market_regime" not in predictions.columns:
+        return {}
+    rows = {}
+    for regime, group in predictions.groupby("market_regime", dropna=False):
+        label = "unknown" if pd.isna(regime) else str(regime)
+        if group.empty:
+            continue
+        metrics = {}
+        for a, p in zip(ACTUAL, PRED):
+            y = group[a].astype(float)
+            yh = group[p].astype(float)
+            metrics[f"{p}_mae"] = float(mean_absolute_error(y, yh))
+            metrics[f"{p}_rmse"] = float(np.sqrt(mean_squared_error(y, yh)))
+        metrics["close_direction_accuracy"] = float(
+            np.mean(np.sign(group["pred_close"] - group["base_close"]) ==
+                    np.sign(group["actual_close"] - group["base_close"]))
+        )
+        metrics["samples"] = int(len(group))
+        rows[label] = metrics
+    return rows
 
 
 def evaluate(predictions: pd.DataFrame) -> dict:
@@ -75,6 +96,9 @@ def evaluate(predictions: pd.DataFrame) -> dict:
                 np.sign(predictions["actual_close"] - predictions["base_close"]))
     )
     result.update(ranking_metrics(predictions))
+    regime_metrics = _grouped_forecast_metrics(predictions)
+    if regime_metrics:
+        result["regime_metrics"] = regime_metrics
     return result
 
 
