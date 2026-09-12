@@ -6,6 +6,7 @@ from xgboost import XGBRegressor
 
 TARGETS = ["target_open", "target_high", "target_low", "target_close"]
 
+
 class OHLCForecaster:
     def __init__(self, params: dict | None = None):
         base = dict(
@@ -13,7 +14,8 @@ class OHLCForecaster:
             learning_rate=0.03, subsample=0.8, colsample_bytree=0.85,
             reg_lambda=2.0, random_state=42,
         )
-        if params: base.update(params)
+        if params:
+            base.update(params)
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
 
@@ -24,6 +26,17 @@ class OHLCForecaster:
             model.fit(train[features], train[target])
         return self
 
+    @staticmethod
+    def enforce_ohlc_constraints(out: pd.DataFrame) -> pd.DataFrame:
+        """Ensure predicted OHLC forms a physically valid daily candle."""
+        out = out.copy()
+        price_cols = ["pred_open", "pred_high", "pred_low", "pred_close"]
+        for col in price_cols:
+            out[col] = out[col].clip(lower=0.0)
+        out["pred_high"] = out[["pred_open", "pred_high", "pred_close"]].max(axis=1)
+        out["pred_low"] = out[["pred_open", "pred_low", "pred_close"]].min(axis=1)
+        return out
+
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
         out = df[["date", "symbol", "close"]].copy()
         for target, model in self.models.items():
@@ -33,7 +46,7 @@ class OHLCForecaster:
         out["pred_high"] = base * (1 + out["pred_high"])
         out["pred_low"] = base * (1 + out["pred_low"])
         out["pred_close"] = base * (1 + out["pred_close"])
-        return out
+        return self.enforce_ohlc_constraints(out)
 
     def save(self, path: str) -> None:
         joblib.dump(self, path)
