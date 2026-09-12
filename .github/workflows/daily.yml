@@ -69,6 +69,12 @@ jobs:
             fi
           done
 
+      - name: Restore cumulative feedback history
+        shell: bash
+        run: |
+          src=$(find previous -name feedback.csv -type f -print -quit 2>/dev/null || true)
+          if [ -n "$src" ]; then cp "$src" artifacts/feedback.csv; fi
+
       - name: Evaluate previous predictions
         if: steps.previous.outputs.run_id != ''
         env:
