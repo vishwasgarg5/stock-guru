@@ -17,6 +17,19 @@ def test_backtest_calculates_return_and_turnover():
     assert result["max_drawdown"] <= 0
 
 
+def test_backtest_reports_regime_metrics():
+    predictions = pd.DataFrame([
+        {"prediction_date": "2025-01-02", "symbol": "AAA", "position_weight": 1.0, "trade": True, "base_close": 100, "actual_close": 102, "market_regime": "bull"},
+        {"prediction_date": "2025-01-03", "symbol": "AAA", "position_weight": 1.0, "trade": True, "base_close": 102, "actual_close": 99, "market_regime": "bear"},
+    ])
+    result = backtest(predictions, transaction_cost_bps=0)
+    assert set(result["regime_metrics"]) == {"bull", "bear"}
+    assert result["regime_metrics"]["bull"]["days"] == 1
+    assert result["regime_metrics"]["bear"]["days"] == 1
+    assert result["regime_metrics"]["bull"]["total_return"] > 0
+    assert result["regime_metrics"]["bear"]["total_return"] < 0
+
+
 def test_backtest_rejects_missing_columns():
     try:
         backtest(pd.DataFrame([{"symbol": "AAA"}]))
