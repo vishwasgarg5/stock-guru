@@ -5,6 +5,9 @@ on:
     - cron: "30 18 * * 1-5"
   workflow_dispatch:
 
+permissions:
+  actions: read
+
 jobs:
   daily:
     runs-on: ubuntu-latest
@@ -15,6 +18,43 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements.txt
+
+      - name: Restore previous daily artifact
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "${RUN_ID}" ]; then
+            echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+            gh run download "${RUN_ID}" --name "stock-guru-daily-${RUN_ID}" --dir previous
+            mkdir -p artifacts
+            for f in ranker.joblib ohlc.joblib features.csv; do
+              if [ -f "previous/artifacts/${f}" ]; then cp "previous/artifacts/${f}" "artifacts/${f}"; fi
+            done
+          else
+            echo "No previous successful daily artifact found."
+          fi
+
+      - name: Evaluate previous predictions
+        if: steps.previous.outputs.run_id != ''
+        env:
+          PYTHONPATH: src
+        shell: bash
+        run: |
+          PRED=$(find previous -name daily_predictions.csv -type f -print -quit)
+          if [ -n "${PRED}" ]; then
+            python -m stock_guru.cli feedback \
+              --prices data/prices.csv \
+              --predictions "${PRED}" \
+              --output artifacts/feedback.csv \
+              --metrics-output artifacts/feedback_metrics.json
+          else
+            echo "Previous prediction file not found; skipping feedback."
+          fi
+
       - name: Run daily prediction
         env:
           PYTHONPATH: src
@@ -23,12 +63,15 @@ jobs:
             --prices data/prices.csv \
             --model-dir artifacts \
             --output artifacts/daily_predictions.csv
+
       - name: Upload daily outputs
         uses: actions/upload-artifact@v4
         with:
           name: stock-guru-daily-${{ github.run_number }}
           path: |
             artifacts/daily_predictions.csv
+            artifacts/feedback.csv
+            artifacts/feedback_metrics.json
             artifacts/ranker.joblib
             artifacts/ohlc.joblib
             artifacts/features.csv
