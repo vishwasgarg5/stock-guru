@@ -6,6 +6,9 @@ from .evaluation import evaluate
 from .pipeline import Pipeline
 
 
+FEEDBACK_KEY_COLUMNS = ["prediction_date", "symbol", "model_version"]
+
+
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
     """Join a prediction made for date D to the next available OHLC for that symbol."""
     p = predictions.copy()
@@ -48,10 +51,39 @@ def score_labeled(labeled: pd.DataFrame) -> dict:
     return evaluate(labeled)
 
 
+def _feedback_keys(df: pd.DataFrame) -> pd.Series:
+    """Build a stable deduplication key for prediction feedback rows."""
+    key = pd.to_datetime(df["prediction_date"]).dt.normalize().astype(str) + "|" + df["symbol"].astype(str)
+    if "model_version" in df.columns:
+        key = key + "|" + df["model_version"].fillna("").astype(str)
+    return key
+
+
 def append_feedback(store: str, labeled: pd.DataFrame) -> None:
+    """Append only new prediction outcomes, deduplicated by date/symbol/model."""
+    if labeled.empty:
+        return
+
     path = Path(store)
     path.parent.mkdir(parents=True, exist_ok=True)
-    labeled.to_csv(path, mode="a" if path.exists() else "w", header=not path.exists(), index=False)
+    incoming = labeled.copy()
+    incoming["prediction_date"] = pd.to_datetime(incoming["prediction_date"]).dt.normalize()
+
+    if path.exists():
+        existing = pd.read_csv(path)
+        if not existing.empty:
+            existing["prediction_date"] = pd.to_datetime(existing["prediction_date"]).dt.normalize()
+            combined = pd.concat([existing, incoming], ignore_index=True, sort=False)
+        else:
+            combined = incoming
+    else:
+        combined = incoming
+
+    combined = combined.drop_duplicates(subset=FEEDBACK_KEY_COLUMNS if all(
+        col in combined.columns for col in FEEDBACK_KEY_COLUMNS
+    ) else ["prediction_date", "symbol"], keep="last")
+    combined = combined.sort_values(["prediction_date", "symbol"])
+    combined.to_csv(path, index=False)
 
 
 def retrain_candidate(raw: pd.DataFrame, validation_dates: int = 20, top_k: int = 10) -> tuple[Pipeline, dict]:
