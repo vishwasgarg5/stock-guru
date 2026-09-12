@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from stock_guru.retrainer import _training_history, should_accept
 from stock_guru.model_selection import should_promote, summarize, summarize_feedback
@@ -49,11 +50,11 @@ def test_validation_summary_aggregates_regime_metrics_without_breaking_scalar_me
         FoldResult("2025-01-02", "2025-01-03", {"pred_close_rmse": 0.20}, {"bull": {"samples": 1, "pred_close_rmse": 0.14}, "bear": {"samples": 1, "pred_close_rmse": 0.30}}),
     ]
     summary = summarize(results)
-    assert summary["pred_close_rmse"] == 0.15
+    assert summary["pred_close_rmse"] == pytest.approx(0.15)
     assert summary["validation_folds"] == 2
     assert summary["regime_metrics"]["bull"]["samples"] == 3
-    assert summary["regime_metrics"]["bull"]["pred_close_rmse"] == (0.08 * 2 + 0.14) / 3
-    assert summary["regime_metrics"]["bear"]["pred_close_rmse"] == 0.30
+    assert summary["regime_metrics"]["bull"]["pred_close_rmse"] == pytest.approx((0.08 * 2 + 0.14) / 3)
+    assert summary["regime_metrics"]["bear"]["pred_close_rmse"] == pytest.approx(0.30)
 
 
 def test_training_history_excludes_prediction_date_and_future_sessions():
