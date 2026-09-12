@@ -17,6 +17,18 @@ class RetrainingDecision:
     new_metrics: dict
 
 
+def _training_history(raw: pd.DataFrame, prediction_date: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Return only observations strictly before the live prediction session."""
+    out = raw.copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.normalize()
+    if prediction_date is not None:
+        cutoff = pd.Timestamp(prediction_date).normalize()
+        out = out[out["date"] < cutoff]
+    if out.empty:
+        raise ValueError("No historical sessions remain before the prediction date")
+    return out.sort_values(["date", "symbol"])
+
+
 def should_accept(old_metrics: dict, new_metrics: dict,
                   rmse_tolerance: float = 0.0,
                   ranking_tolerance: float = 0.0) -> RetrainingDecision:
@@ -45,8 +57,13 @@ def decide_retraining(old_metrics: dict | None, new_metrics: dict,
 def adaptive_retrain(raw: pd.DataFrame, model_dir: str = "artifacts",
                      min_train_days: int = 252, step_days: int = 20,
                      top_k: int = 10, rmse_tolerance: float = 0.0,
-                     ranking_tolerance: float = 0.0) -> RetrainingDecision:
-    """Evaluate a candidate with walk-forward validation before promotion."""
+                     ranking_tolerance: float = 0.0,
+                     prediction_date: str | None = None) -> RetrainingDecision:
+    """Evaluate a candidate with walk-forward validation before promotion.
+
+    If prediction_date is supplied, the promoted model is fit only on sessions
+    strictly before that date. This keeps the live training boundary explicit.
+    """
     model_path = Path(model_dir)
     metrics_path = model_path / "walk_forward_metrics.json"
     old_metrics = None
@@ -59,7 +76,9 @@ def adaptive_retrain(raw: pd.DataFrame, model_dir: str = "artifacts",
                                  rmse_tolerance=rmse_tolerance,
                                  ranking_tolerance=ranking_tolerance)
     if decision.accepted:
-        candidate = Pipeline(top_k=top_k).train(raw)
+        cutoff = pd.Timestamp(prediction_date).normalize() if prediction_date else None
+        training = _training_history(raw, cutoff)
+        candidate = Pipeline(top_k=top_k).train(training)
         model_path.mkdir(parents=True, exist_ok=True)
         candidate.ranker.save(str(model_path / "ranker.joblib"))
         candidate.forecaster.save(str(model_path / "ohlc.joblib"))
