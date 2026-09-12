@@ -5,8 +5,32 @@ import json
 import pandas as pd
 
 
+def _aggregate_fold_regimes(folds) -> dict:
+    """Aggregate regime diagnostics across folds, weighted by forecast samples."""
+    buckets: dict[str, list[dict]] = {}
+    for fold in folds:
+        for regime, metrics in (getattr(fold, "regime_metrics", None) or {}).items():
+            buckets.setdefault(str(regime), []).append(metrics)
+
+    result = {}
+    for regime, rows in buckets.items():
+        sample_total = sum(int(row.get("samples", 0)) for row in rows)
+        if sample_total <= 0:
+            continue
+        aggregated = {"samples": sample_total}
+        for key in rows[0]:
+            if key == "samples":
+                continue
+            values = [(float(row[key]), int(row.get("samples", 0))) for row in rows if key in row]
+            if values:
+                denominator = sum(weight for _, weight in values)
+                aggregated[key] = sum(value * weight for value, weight in values) / denominator if denominator else 0.0
+        result[regime] = aggregated
+    return result
+
+
 def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -> dict:
-    """Persist portfolio metrics, fold metrics, and equity/trade data."""
+    """Persist portfolio metrics, fold metrics, and regime diagnostics."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -14,6 +38,9 @@ def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -
     (out / "metrics.json").write_text(json.dumps(portfolio, indent=2, default=str), encoding="utf-8")
 
     folds = result.get("fold_results", [])
+    regime_metrics = _aggregate_fold_regimes(folds)
+    (out / "regime_metrics.json").write_text(json.dumps(regime_metrics, indent=2), encoding="utf-8")
+
     if folds:
         pd.DataFrame([{
             "train_end": f.train_end,
@@ -27,6 +54,7 @@ def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -
 
     return {
         "metrics": str(out / "metrics.json"),
+        "regime_metrics": str(out / "regime_metrics.json"),
         "fold_metrics": str(out / "fold_metrics.csv"),
         "trades": str(out / "trades.csv"),
     }
