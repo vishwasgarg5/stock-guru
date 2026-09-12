@@ -52,7 +52,7 @@ def should_promote(
     rmse_tolerance: float = 0.0,
     ranking_tolerance: float = 0.0,
 ) -> bool:
-    """Promote only when the candidate is no worse on forecasting and ranking.
+    """Promote only when the candidate strictly improves forecasting and does not regress.
 
     Missing ranking metrics are ignored for backward compatibility with older
     metric files. Once ranking metrics exist, the candidate must not regress
@@ -66,7 +66,9 @@ def should_promote(
     old_direction = _metric(old, "close_direction_accuracy", 0.0)
     new_direction = _metric(new, "close_direction_accuracy", 0.0)
 
-    forecast_ok = new_rmse <= old_rmse - rmse_tolerance and new_direction >= old_direction
+    # Equality is not an improvement. A positive tolerance additionally
+    # requires the candidate to beat the incumbent by more than that margin.
+    forecast_ok = new_rmse < old_rmse - rmse_tolerance and new_direction >= old_direction
     if not forecast_ok:
         return False
 
