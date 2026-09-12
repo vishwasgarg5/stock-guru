@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import pandas as pd
 from .features import build_features
 from .fundamentals import load_fundamentals, asof_join
@@ -31,12 +32,20 @@ def predict_daily(prices_path: str, model_dir: str, prediction_date: str,
     model_path = Path(model_dir)
     ranker = StockRanker.load(str(model_path / "ranker.joblib"))
     forecaster = OHLCForecaster.load(str(model_path / "ohlc.joblib"))
+    model_version = "unknown"
+    metadata_path = model_path / "model_metadata.json"
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        model_version = str(metadata.get("model_version") or model_version)
+
     ranked = ranker.score(day).head(top_k)
     pred = forecaster.predict(ranked)
     pred["rank"] = range(1, len(pred) + 1)
     pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
 
-    regime_columns = ["market_ret_20d", "market_volatility_20", "market_breadth"]
+    regime_columns = ["market_ret_20d", "market_volatility_20d", "market_breadth"]
+    if "market_volatility_20d" not in day.columns:
+        regime_columns = ["market_ret_20d", "market_volatility_20", "market_breadth"]
     risk_columns = ["symbol", "atr_pct_14", "volatility_20", "sector", *regime_columns]
     available = [c for c in risk_columns if c in ranked.columns]
     pred = pred.merge(ranked[available].drop_duplicates("symbol"), on="symbol", how="left")
@@ -49,5 +58,5 @@ def predict_daily(prices_path: str, model_dir: str, prediction_date: str,
 
     # The forecast is for the next trading session after prediction_date.
     pred["forecast_horizon"] = "next_session"
-    pred["model_version"] = "adaptive-v1"
+    pred["model_version"] = model_version
     return final_trade_decision(pred, risk_config)
