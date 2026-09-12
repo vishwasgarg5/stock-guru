@@ -24,12 +24,13 @@ class StockRanker:
 
     @staticmethod
     def relevance(values: pd.Series) -> pd.Series:
-        # Cross-sectional percentile is stable across different price scales.
-        return values.rank(pct=True, method="average")
+        # XGBoost ranking objectives require non-negative integer relevance labels.
+        # Preserve cross-sectional ordering while converting ranks to 0-based integers.
+        return values.rank(method="average", ascending=True).sub(1).round().astype(int)
 
     def fit(self, df: pd.DataFrame, features: list[str]) -> "StockRanker":
         train = df.dropna(subset=features + ["target_return"]).sort_values(["date", "symbol"])
-        y = train.groupby("date")["target_return"].transform(self.relevance).astype(float)
+        y = train.groupby("date")["target_return"].transform(self.relevance).astype(int)
         qid = train["date"].factorize(sort=True)[0]
         self.features = features
         self.model.fit(train[features], y, qid=qid)
