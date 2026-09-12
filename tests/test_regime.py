@@ -30,7 +30,7 @@ def test_high_vol_bear_regime():
 def test_market_returns_are_equal_weighted_not_price_weighted():
     dates = pd.date_range("2026-01-01", periods=2, freq="D")
     raw = pd.DataFrame({
-        "date": list(dates) * 2,
+        "date": [dates[0], dates[0], dates[1], dates[1]],
         "symbol": ["LOW", "HIGH", "LOW", "HIGH"],
         "open": [10, 1000, 10, 1000],
         "high": [11, 1100, 11, 1100],
