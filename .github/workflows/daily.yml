@@ -18,12 +18,20 @@ jobs:
       - name: Run daily prediction
         env:
           PYTHONPATH: src
-        run: python scripts/daily_pipeline.py --prices data/prices.csv --model-dir artifacts --output artifacts/daily_predictions.csv
+        run: |
+          python scripts/daily_pipeline.py \
+            --prices data/prices.csv \
+            --model-dir artifacts \
+            --output artifacts/daily_predictions.csv
       - name: Upload daily outputs
         uses: actions/upload-artifact@v4
         with:
           name: stock-guru-daily-${{ github.run_number }}
           path: |
             artifacts/daily_predictions.csv
+            artifacts/ranker.joblib
+            artifacts/ohlc.joblib
+            artifacts/features.csv
             data/nifty500_universe.csv
             data/universe_snapshots.csv
+          if-no-files-found: error
