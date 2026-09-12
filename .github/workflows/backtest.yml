@@ -1,0 +1,63 @@
+name: Walk-forward backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "Historical price start date"
+        required: false
+        default: "2018-01-01"
+      min_train_days:
+        description: "Minimum expanding training sessions"
+        required: false
+        default: "252"
+      step_days:
+        description: "Sessions between walk-forward folds"
+        required: false
+        default: "20"
+      top_k:
+        description: "Number of stocks selected per prediction date"
+        required: false
+        default: "10"
+      transaction_cost_bps:
+        description: "Round-trip transaction cost assumption in basis points"
+        required: false
+        default: "10"
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Download historical NIFTY 500 prices
+        run: >-
+          PYTHONPATH=src python -m stock_guru.cli download
+          --start "${{ inputs.start }}"
+          --output data/prices.csv
+
+      - name: Run leakage-safe walk-forward strategy backtest
+        run: >-
+          PYTHONPATH=src python -m stock_guru.cli backtest
+          --prices data/prices.csv
+          --min-train-days ${{ inputs.min_train_days }}
+          --step-days ${{ inputs.step_days }}
+          --top-k ${{ inputs.top_k }}
+          --transaction-cost-bps ${{ inputs.transaction_cost_bps }}
+          --output-dir artifacts/backtest
+
+      - name: Publish backtest artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: walk-forward-backtest
+          path: artifacts/backtest/
+          if-no-files-found: error
+          retention-days: 30
