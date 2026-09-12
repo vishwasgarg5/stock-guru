@@ -2,7 +2,6 @@ name: Adaptive Stock Guru Retraining
 
 on:
   schedule:
-    # Weekly validation/retraining keeps the expensive walk-forward job off the daily path.
     - cron: "30 19 * * 6"
   workflow_dispatch:
 
@@ -44,7 +43,6 @@ jobs:
           PY
           )
           echo "PREDICTION_DATE=${PREDICTION_DATE}" >> "$GITHUB_ENV"
-          echo "Retraining prediction boundary: ${PREDICTION_DATE}"
 
       - name: Restore latest promoted retrain
         env:
@@ -56,28 +54,28 @@ jobs:
           RETRAIN_RUN_ID=$(gh run list --workflow retrain.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
           if [ -n "${RETRAIN_RUN_ID}" ]; then
             gh run download "${RETRAIN_RUN_ID}" --name "stock-guru-retrain-${RETRAIN_RUN_ID}" --dir incumbent
-            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv; do
               src=$(find incumbent -name "$f" -type f -print -quit 2>/dev/null || true)
               if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
             done
           fi
 
-      - name: Restore latest daily model if no promoted retrain exists
+      - name: Restore latest daily feedback/model if needed
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p daily
-          if [ ! -f artifacts/ranker.joblib ] || [ ! -f artifacts/ohlc.joblib ]; then
-            DAILY_RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-            if [ -n "${DAILY_RUN_ID}" ]; then
-              gh run download "${DAILY_RUN_ID}" --name "stock-guru-daily-${DAILY_RUN_ID}" --dir daily
-              for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
+          DAILY_RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "${DAILY_RUN_ID}" ]; then
+            gh run download "${DAILY_RUN_ID}" --name "stock-guru-daily-${DAILY_RUN_ID}" --dir daily
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv; do
+              if [ ! -f "artifacts/$f" ]; then
                 src=$(find daily -name "$f" -type f -print -quit 2>/dev/null || true)
                 if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
-              done
-            fi
+              fi
+            done
           fi
 
       - name: Run controlled retraining
@@ -91,6 +89,7 @@ jobs:
             --step-days 20 \
             --top-k 10 \
             --prediction-date "${PREDICTION_DATE}" \
+            --feedback artifacts/feedback.csv \
             --decision-output artifacts/retraining_decision.json
 
       - name: Publish retraining decision and model
@@ -103,6 +102,7 @@ jobs:
             artifacts/ranker.joblib
             artifacts/ohlc.joblib
             artifacts/features.csv
+            artifacts/feedback.csv
             data/nifty500_universe.csv
             data/universe_snapshots.csv
           if-no-files-found: error
