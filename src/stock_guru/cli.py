@@ -33,6 +33,7 @@ def main() -> None:
     pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
     fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv")
     rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10)
+    bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     args = parser.parse_args()
 
@@ -72,24 +73,25 @@ def main() -> None:
         from .model_selection import evaluate_candidate, should_promote, save_metrics
         data = load(args.prices)
         model_dir = Path(args.model_dir)
-        candidate_metrics = evaluate_candidate(
-            data,
-            min_train_days=args.min_train_days,
-            step_days=args.step_days,
-            top_k=args.top_k,
-        )
+        candidate_metrics = evaluate_candidate(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k)
         metrics_path = model_dir / "walk_forward_metrics.json"
         old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None
         accepted = should_promote(old_metrics, candidate_metrics)
         print({"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics})
         if accepted:
-            # Validation decides whether to promote; the promoted model is then
-            # retrained on all currently available history.
             final_pipe = Pipeline(top_k=args.top_k).train(data)
             save_model(final_pipe, args.model_dir)
             save_metrics(args.model_dir, candidate_metrics)
         else:
             print("candidate rejected; existing model retained")
+    elif args.command == "backtest":
+        from .walk_forward_backtest import run_strategy_walk_forward
+        from .reporting import save_backtest_report
+        result = run_strategy_walk_forward(load(args.prices), min_train_days=args.min_train_days,
+                                           step_days=args.step_days, top_k=args.top_k,
+                                           transaction_cost_bps=args.transaction_cost_bps)
+        paths = save_backtest_report(result, args.output_dir)
+        print(json.dumps({"portfolio": result["portfolio"], "files": paths}, indent=2, default=str))
     elif args.command == "evaluate":
         print(evaluate(pd.read_csv(args.predictions)))
 
