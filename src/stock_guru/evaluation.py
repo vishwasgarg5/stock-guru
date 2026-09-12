@@ -8,6 +8,60 @@ ACTUAL = ["actual_open", "actual_high", "actual_low", "actual_close"]
 PRED = ["pred_open", "pred_high", "pred_low", "pred_close"]
 
 
+def _ndcg(scores: np.ndarray, relevance: np.ndarray, k: int) -> float:
+    order = np.argsort(scores)[::-1][:k]
+    ideal = np.sort(relevance)[::-1][:k]
+    discounts = 1.0 / np.log2(np.arange(2, len(order) + 2))
+    dcg = float(np.sum(relevance[order] * discounts))
+    idcg = float(np.sum(ideal * discounts))
+    return dcg / idcg if idcg > 0 else 0.0
+
+
+def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
+    """Measure cross-sectional stock-selection quality for each prediction date.
+
+    The input should contain the ranked universe, not only the selected top-k names.
+    """
+    required = {"symbol", "actual_close", "base_close"}
+    if not required.issubset(predictions.columns):
+        return {}
+    score_col = "rank_score" if "rank_score" in predictions.columns else None
+    if score_col is None and "rank" not in predictions.columns:
+        return {}
+
+    p = predictions.copy()
+    p["actual_return"] = p["actual_close"] / p["base_close"] - 1.0
+    groups = p.groupby("prediction_date", sort=False) if "prediction_date" in p.columns else [("all", p)]
+
+    precisions, top_returns, universe_returns, excess, ndcgs = [], [], [], [], []
+    for _, g in groups:
+        g = g.dropna(subset=["actual_return"])
+        if g.empty:
+            continue
+        ordered = g.sort_values(score_col, ascending=False) if score_col else g.sort_values("rank")
+        top = ordered.head(k)
+        universe_mean = float(g["actual_return"].mean())
+        top_mean = float(top["actual_return"].mean())
+        precisions.append(float((top["actual_return"] > 0).mean()))
+        top_returns.append(top_mean)
+        universe_returns.append(universe_mean)
+        excess.append(top_mean - universe_mean)
+        relevance = g["actual_return"].to_numpy()
+        relevance = relevance - relevance.min() + 1e-12
+        scores = (ordered[score_col].to_numpy() if score_col else -ordered["rank"].to_numpy())
+        ndcgs.append(_ndcg(scores, relevance, k))
+
+    if not precisions:
+        return {}
+    return {
+        "precision_at_k": float(np.mean(precisions)),
+        "top_k_mean_return": float(np.mean(top_returns)),
+        "universe_mean_return": float(np.mean(universe_returns)),
+        "top_k_excess_return": float(np.mean(excess)),
+        "ndcg_at_k": float(np.mean(ndcgs)),
+    }
+
+
 def evaluate(predictions: pd.DataFrame) -> dict:
     result = {}
     for a, p in zip(ACTUAL, PRED):
@@ -21,40 +75,6 @@ def evaluate(predictions: pd.DataFrame) -> dict:
                 np.sign(predictions["actual_close"] - predictions["base_close"]))
     )
     result.update(ranking_metrics(predictions))
-    return result
-
-
-def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
-    """Evaluate whether the model's top-ranked stocks outperform the universe."""
-    p = predictions.copy()
-    if "rank_score" in p.columns:
-        score = "rank_score"
-    elif "rank" in p.columns:
-        score = None
-    else:
-        return {}
-
-    p["actual_return"] = p["actual_close"] / p["base_close"] - 1
-    if score:
-        p = p.sort_values(score, ascending=False)
-    else:
-        p = p.sort_values("rank")
-    top = p.groupby("prediction_date", group_keys=False).head(k) if "prediction_date" in p else p.head(k)
-    universe_mean = float(p["actual_return"].mean())
-    top_mean = float(top["actual_return"].mean()) if not top.empty else float("nan")
-    result = {
-        "precision_at_k": float((top["actual_return"] > 0).mean()) if not top.empty else float("nan"),
-        "top_k_mean_return": top_mean,
-        "universe_mean_return": universe_mean,
-        "top_k_excess_return": top_mean - universe_mean if not top.empty else float("nan"),
-    }
-    # NDCG-style score using non-negative shifted next-day returns as relevance.
-    relevance = p["actual_return"] - p["actual_return"].min() + 1e-12
-    discounts = 1.0 / np.log2(np.arange(2, len(p) + 2))
-    dcg = float(np.sum(relevance.to_numpy() * discounts))
-    ideal = np.sort(relevance.to_numpy())[::-1]
-    idcg = float(np.sum(ideal * discounts))
-    result["ndcg"] = dcg / idcg if idcg > 0 else 0.0
     return result
 
 
