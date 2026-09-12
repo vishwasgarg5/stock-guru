@@ -4,6 +4,7 @@ import pandas as pd
 
 from .backtest import backtest
 from .walk_forward import run_walk_forward
+from .regime import regime_label
 
 
 def run_strategy_walk_forward(raw: pd.DataFrame, min_train_days: int = 252,
@@ -23,9 +24,6 @@ def run_strategy_walk_forward(raw: pd.DataFrame, min_train_days: int = 252,
     fold_results = run_walk_forward(raw, min_train_days=min_train_days,
                                     step_days=step_days, top_k=top_k)
 
-    # Re-run the same fold schedule to obtain the actual selected forecasts with
-    # risk decisions. Keeping this separate avoids changing the existing model-
-    # evaluation API while making portfolio accounting explicit.
     from .features import build_features
     from .pipeline import Pipeline
     from .feedback import label_predictions
@@ -47,6 +45,12 @@ def run_strategy_walk_forward(raw: pd.DataFrame, min_train_days: int = 252,
         pred = pipe.forecaster.predict(ranked)
         if pred.empty:
             continue
+        if "market_regime" in day.columns:
+            regime_map = day[["symbol", "market_ret_20d", "market_volatility_20", "market_breadth"]].drop_duplicates("symbol").set_index("symbol")
+            pred = pred.join(regime_map, on="symbol")
+            pred["market_regime"] = pred.apply(regime_label, axis=1)
+        else:
+            pred["market_regime"] = "unknown"
         labeled = label_predictions(pred, raw)
         labeled = labeled[labeled["prediction_date"] == prediction_date].copy()
         if labeled.empty:
