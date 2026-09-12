@@ -31,7 +31,7 @@ def main() -> None:
     dl = sub.add_parser("download"); dl.add_argument("--start", required=True); dl.add_argument("--end"); dl.add_argument("--output", default="data/prices.csv")
     tr = sub.add_parser("train"); tr.add_argument("--prices", required=True); tr.add_argument("--model-dir", default="artifacts")
     pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
-    fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv")
+    fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv"); fb.add_argument("--metrics-output", default="artifacts/feedback_metrics.json")
     rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10)
     bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
@@ -46,10 +46,10 @@ def main() -> None:
         save_model(pipe, args.model_dir)
         print(f"trained; features={len(pipe.features)}")
     elif args.command == "predict":
-        data = load(args.prices)
         from .features import build_features
         from .ranker import StockRanker
         from .ohlc import OHLCForecaster
+        data = load(args.prices)
         feat_data, features = build_features(data)
         ranker = StockRanker.load(str(Path(args.model_dir) / "ranker.joblib"))
         forecaster = OHLCForecaster.load(str(Path(args.model_dir) / "ohlc.joblib"))
@@ -63,12 +63,21 @@ def main() -> None:
         print(pred.to_string(index=False))
     elif args.command == "feedback":
         from .feedback import label_predictions, append_feedback
-        predictions = pd.read_csv(args.predictions, parse_dates=["date"])
+        predictions = pd.read_csv(args.predictions)
+        if "date" in predictions.columns:
+            predictions["date"] = pd.to_datetime(predictions["date"])
+        elif "prediction_date" in predictions.columns:
+            predictions["prediction_date"] = pd.to_datetime(predictions["prediction_date"])
+        else:
+            raise ValueError("Predictions must contain date or prediction_date")
         labeled = label_predictions(predictions, load(args.prices))
         if labeled.empty:
             raise RuntimeError("No next-day actuals matched the stored predictions")
         append_feedback(args.output, labeled)
-        print(evaluate(labeled))
+        metrics = evaluate(labeled)
+        Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.metrics_output).write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        print(metrics)
     elif args.command == "retrain":
         from .model_selection import evaluate_candidate, should_promote, save_metrics
         data = load(args.prices)
