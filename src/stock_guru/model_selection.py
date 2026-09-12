@@ -37,8 +37,8 @@ def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20) -> dic
         return None
     return {
         "feedback_rows": int(len(data)),
-        "feedback_direction_accuracy": float(data["direction_correct"].astype(float).mean()),
-        "feedback_return_mae": float(data["return_error"].abs().mean()),
+        "feedback_direction_accuracy": round(float(data["direction_correct"].astype(float).mean()), 12),
+        "feedback_return_mae": round(float(data["return_error"].abs().mean()), 12),
     }
 
 
