@@ -15,30 +15,27 @@ REGIME_FEATURES = [
 
 
 def add_market_regime_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add cross-sectional market-regime features known at prediction time."""
-    out = df.sort_values(["date", "symbol"]).copy()
+    """Add equal-weight market-regime features known at prediction time."""
+    out = df.sort_values(["symbol", "date"]).copy()
     out["date"] = pd.to_datetime(out["date"]).dt.normalize()
 
-    market = out.groupby("date").agg(
-        market_close=("close", "mean"),
-        market_sma20=("close", lambda s: s.mean()),
-    ).sort_index()
-    market["market_ret_1d"] = market["market_close"].pct_change()
-    market["market_ret_5d"] = market["market_close"].pct_change(5)
-    market["market_ret_20d"] = market["market_close"].pct_change(20)
-    market["market_volatility_20"] = market["market_ret_1d"].rolling(20).std()
+    # Build an equal-weight market return series from stock returns rather than
+    # averaging raw share prices, which would overweight high-priced stocks.
+    out["_stock_ret_1d"] = out.groupby("symbol")["close"].pct_change()
+    daily = out.groupby("date")[["_stock_ret_1d"]].mean().rename(columns={"_stock_ret_1d": "market_ret_1d"})
+    daily["market_ret_5d"] = (1.0 + daily["market_ret_1d"]).rolling(5).apply(np.prod, raw=True) - 1.0
+    daily["market_ret_20d"] = (1.0 + daily["market_ret_1d"]).rolling(20).apply(np.prod, raw=True) - 1.0
+    daily["market_volatility_20"] = daily["market_ret_1d"].rolling(20).std()
 
-    # Breadth uses today's already-known close relative to the 20-session SMA.
-    tmp = out.copy()
-    tmp["sma20"] = tmp.groupby("symbol")["close"].transform(lambda s: s.rolling(20).mean())
-    breadth = tmp.groupby("date")["sma20"].agg(
-        market_breadth=lambda s: float(np.mean(tmp.loc[s.index, "close"] > s))
-    )
-    market = market.join(breadth)
-    market["market_above_sma20"] = market["market_breadth"]
+    # Breadth uses today's close relative to each stock's own 20-session SMA.
+    out["_sma20"] = out.groupby("symbol")["close"].transform(lambda s: s.rolling(20).mean())
+    valid = out["_sma20"].notna()
+    breadth = out.loc[valid].assign(_above=out.loc[valid, "close"] > out.loc[valid, "_sma20"]).groupby("date")["_above"].mean()
+    daily["market_breadth"] = breadth
+    daily["market_above_sma20"] = daily["market_breadth"]
 
-    cols = REGIME_FEATURES
-    return out.merge(market[cols], left_on="date", right_index=True, how="left")
+    result = out.merge(daily[REGIME_FEATURES], left_on="date", right_index=True, how="left")
+    return result.drop(columns=["_stock_ret_1d", "_sma20"])
 
 
 def confidence_from_rank(scores: pd.Series) -> pd.Series:
