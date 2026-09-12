@@ -45,3 +45,33 @@ def test_low_expected_return_is_no_trade():
     })
     out = final_trade_decision(df)
     assert out.iloc[0]["decision"] == "NO_TRADE"
+
+
+def test_high_vol_bear_tightens_confidence_filter():
+    df = pd.DataFrame({
+        "symbol": ["AAA", "BBB"],
+        "close": [100.0, 100.0],
+        "pred_close": [105.0, 105.0],
+        "rank_confidence": [0.65, 0.75],
+        "atr_pct_14": [0.05, 0.05],
+        "volatility_20": [0.04, 0.04],
+        "market_regime": ["high_vol_bear", "high_vol_bear"],
+    })
+    out = final_trade_decision(df)
+    assert out.loc[out["symbol"] == "AAA", "decision"].iloc[0] == "NO_TRADE"
+    assert out.loc[out["symbol"] == "BBB", "decision"].iloc[0] == "TRADE"
+
+
+def test_high_vol_bear_caps_total_exposure():
+    df = pd.DataFrame({
+        "symbol": ["A", "B", "C", "D", "E", "F", "G", "H"],
+        "close": [100.0] * 8,
+        "pred_close": [105.0] * 8,
+        "rank_confidence": [1.0] * 8,
+        "atr_pct_14": [0.01] * 8,
+        "volatility_20": [0.04] * 8,
+        "market_regime": ["high_vol_bear"] * 8,
+    })
+    out = final_trade_decision(df)
+    assert out["position_weight"].sum() <= 0.50 + 1e-12
+    assert (out["position_weight"] <= 0.075 + 1e-12).all()
