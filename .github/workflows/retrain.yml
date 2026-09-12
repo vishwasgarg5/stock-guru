@@ -54,7 +54,7 @@ jobs:
           RETRAIN_RUN_ID=$(gh run list --workflow retrain.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
           if [ -n "${RETRAIN_RUN_ID}" ]; then
             gh run download "${RETRAIN_RUN_ID}" --name "stock-guru-retrain-${RETRAIN_RUN_ID}" --dir incumbent
-            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv; do
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv model_metadata.json; do
               src=$(find incumbent -name "$f" -type f -print -quit 2>/dev/null || true)
               if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
             done
@@ -70,7 +70,7 @@ jobs:
           DAILY_RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
           if [ -n "${DAILY_RUN_ID}" ]; then
             gh run download "${DAILY_RUN_ID}" --name "stock-guru-daily-${DAILY_RUN_ID}" --dir daily
-            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv; do
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json feedback.csv model_metadata.json; do
               if [ ! -f "artifacts/$f" ]; then
                 src=$(find daily -name "$f" -type f -print -quit 2>/dev/null || true)
                 if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
@@ -102,6 +102,7 @@ jobs:
             artifacts/ranker.joblib
             artifacts/ohlc.joblib
             artifacts/features.csv
+            artifacts/model_metadata.json
             artifacts/feedback.csv
             data/nifty500_universe.csv
             data/universe_snapshots.csv
