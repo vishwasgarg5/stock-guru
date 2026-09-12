@@ -30,13 +30,27 @@ jobs:
           if [ -n "${RUN_ID}" ]; then
             echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
             gh run download "${RUN_ID}" --name "stock-guru-daily-${RUN_ID}" --dir previous
-            mkdir -p artifacts
-            for f in ranker.joblib ohlc.joblib features.csv; do
-              if [ -f "previous/artifacts/${f}" ]; then cp "previous/artifacts/${f}" "artifacts/${f}"; fi
-            done
           else
             echo "No previous successful daily artifact found."
           fi
+
+      - name: Refresh market data
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          from stock_guru.data import download_nifty500_prices
+          download_nifty500_prices(start="2018-01-01", output="data/prices.csv")
+          PY
+
+      - name: Restore previous model
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          for f in ranker.joblib ohlc.joblib features.csv; do
+            src=$(find previous -name "$f" -type f -print -quit 2>/dev/null || true)
+            if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
+          done
 
       - name: Evaluate previous predictions
         if: steps.previous.outputs.run_id != ''
