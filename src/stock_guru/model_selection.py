@@ -25,21 +25,29 @@ def evaluate_candidate(raw: pd.DataFrame, min_train_days: int = 252, step_days: 
     return summarize(run_walk_forward(raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k))
 
 
-def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20) -> dict | None:
-    """Summarize realized live-model performance for promotion gating."""
+def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20, recent_rows: int = 20) -> dict | None:
+    """Summarize cumulative and recent realized live-model performance."""
     if feedback is None or feedback.empty:
         return None
     required = {"direction_correct", "return_error"}
     if not required.issubset(feedback.columns):
         return None
-    data = feedback.dropna(subset=["direction_correct", "return_error"])
+    data = feedback.copy()
+    data["prediction_date"] = pd.to_datetime(data["prediction_date"], errors="coerce") if "prediction_date" in data.columns else pd.NaT
+    data = data.dropna(subset=["direction_correct", "return_error"])
     if len(data) < min_rows:
         return None
-    return {
+    data = data.sort_values("prediction_date") if "prediction_date" in data.columns else data
+    recent = data.tail(max(1, recent_rows))
+    result = {
         "feedback_rows": int(len(data)),
         "feedback_direction_accuracy": round(float(data["direction_correct"].astype(float).mean()), 12),
         "feedback_return_mae": round(float(data["return_error"].abs().mean()), 12),
+        "recent_feedback_rows": int(len(recent)),
+        "recent_feedback_direction_accuracy": round(float(recent["direction_correct"].astype(float).mean()), 12),
+        "recent_feedback_return_mae": round(float(recent["return_error"].abs().mean()), 12),
     }
+    return result
 
 
 def _metric(metrics: dict, key: str, default: float) -> float:
