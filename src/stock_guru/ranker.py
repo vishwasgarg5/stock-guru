@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import joblib
-import numpy as np
 import pandas as pd
 from xgboost import XGBRanker
 
+
 class StockRanker:
     """Ranks stocks within each date using future next-day return as relevance."""
+
     def __init__(self, params: dict | None = None):
         self.model = XGBRanker(
             objective="rank:ndcg",
@@ -24,9 +25,17 @@ class StockRanker:
 
     @staticmethod
     def relevance(values: pd.Series) -> pd.Series:
-        # XGBoost ranking objectives require non-negative integer relevance labels.
-        # Preserve cross-sectional ordering while converting ranks to 0-based integers.
-        return values.rank(method="average", ascending=True).sub(1).round().astype(int)
+        """Map each cross-sectional rank to the valid 0..31 NDCG range.
+
+        XGBoost's default exponential NDCG gain accepts relevance levels only
+        through 31.  Scaling the within-day rank preserves ordering while
+        keeping the labels valid for NIFTY 500-sized query groups.
+        """
+        ranks = values.rank(method="average", ascending=True)
+        if len(ranks) <= 1:
+            return pd.Series(0, index=values.index, dtype=int)
+        scaled = ((ranks - 1.0) * 31.0 / (len(ranks) - 1.0)).round()
+        return scaled.clip(0, 31).astype(int)
 
     def fit(self, df: pd.DataFrame, features: list[str]) -> "StockRanker":
         train = df.dropna(subset=features + ["target_return"]).sort_values(["date", "symbol"])
