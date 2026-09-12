@@ -38,7 +38,8 @@ class OHLCForecaster:
         return out
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
-        out = df[["date", "symbol", "close"]].copy()
+        metadata = [c for c in ["date", "symbol", "close", "rank_score"] if c in df.columns]
+        out = df[metadata].copy()
         for target, model in self.models.items():
             out[target.replace("target_", "pred_")] = model.predict(df[self.features])
         base = out["close"]
