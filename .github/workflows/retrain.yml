@@ -1,0 +1,71 @@
+name: Adaptive Stock Guru Retraining
+
+on:
+  schedule:
+    # Weekly validation/retraining keeps the expensive walk-forward job off the daily path.
+    - cron: "30 19 * * 6"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+
+      - name: Refresh market data
+        env:
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          from stock_guru.data import download_nifty500_prices
+          download_nifty500_prices(start="2018-01-01", output="data/prices.csv")
+          PY
+
+      - name: Restore incumbent model and metrics
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "${RUN_ID}" ]; then
+            gh run download "${RUN_ID}" --name "stock-guru-daily-${RUN_ID}" --dir previous
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
+              src=$(find previous -name "$f" -type f -print -quit 2>/dev/null || true)
+              if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
+            done
+          fi
+
+      - name: Run controlled retraining
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m stock_guru.cli retrain \
+            --prices data/prices.csv \
+            --model-dir artifacts \
+            --min-train-days 252 \
+            --step-days 20 \
+            --top-k 10 > artifacts/retraining_decision.json
+
+      - name: Publish retraining decision and model
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-guru-retrain-${{ github.run_number }}
+          path: |
+            artifacts/retraining_decision.json
+            artifacts/walk_forward_metrics.json
+            artifacts/ranker.joblib
+            artifacts/ohlc.joblib
+            artifacts/features.csv
+            data/nifty500_universe.csv
+            data/universe_snapshots.csv
+          if-no-files-found: error
