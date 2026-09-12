@@ -65,14 +65,20 @@ def main() -> None:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True); pred.to_csv(args.output, index=False); print(pred.to_string(index=False))
     elif args.command == "feedback":
         from .feedback import label_predictions, append_feedback
+        from .model_selection import summarize_feedback
         predictions = pd.read_csv(args.predictions)
         if "date" in predictions.columns: predictions["date"] = pd.to_datetime(predictions["date"])
         elif "prediction_date" in predictions.columns: predictions["prediction_date"] = pd.to_datetime(predictions["prediction_date"])
         else: raise ValueError("Predictions must contain date or prediction_date")
-        labeled = label_predictions(predictions, load(args.prices))
+        market = load(args.prices)
+        labeled = label_predictions(predictions, market)
         if labeled.empty: raise RuntimeError("No next-day actuals matched the stored predictions")
-        append_feedback(args.output, labeled); metrics = evaluate(labeled)
-        Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True); Path(args.metrics_output).write_text(json.dumps(metrics, indent=2), encoding="utf-8"); print(metrics)
+        append_feedback(args.output, labeled)
+        current_metrics = evaluate(labeled)
+        cumulative_feedback = pd.read_csv(args.output)
+        feedback_summary = summarize_feedback(cumulative_feedback, min_rows=1)
+        metrics = {"current_batch": current_metrics, "cumulative": feedback_summary}
+        Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True); Path(args.metrics_output).write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8"); print(metrics)
     elif args.command == "retrain":
         from .model_selection import evaluate_candidate, should_promote, save_metrics, summarize_feedback
         data = load(args.prices); model_dir = Path(args.model_dir)
