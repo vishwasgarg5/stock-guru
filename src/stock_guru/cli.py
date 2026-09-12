@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import json
 import pandas as pd
 from .pipeline import Pipeline
 from .evaluation import evaluate
@@ -31,7 +32,7 @@ def main() -> None:
     tr = sub.add_parser("train"); tr.add_argument("--prices", required=True); tr.add_argument("--model-dir", default="artifacts")
     pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
     fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv")
-    rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--validation-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10)
+    rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     args = parser.parse_args()
 
@@ -55,7 +56,7 @@ def main() -> None:
         ranked = ranker.score(day).head(args.top_k)
         pred = forecaster.predict(ranked)
         pred["rank"] = range(1, len(pred) + 1)
-        pred["model_version"] = "initial-v1"
+        pred["model_version"] = "adaptive-v1"
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         pred.to_csv(args.output, index=False)
         print(pred.to_string(index=False))
@@ -68,24 +69,27 @@ def main() -> None:
         append_feedback(args.output, labeled)
         print(evaluate(labeled))
     elif args.command == "retrain":
-        from .feedback import retrain_candidate
-        from .retrainer import should_accept
+        from .model_selection import evaluate_candidate, should_promote, save_metrics
         data = load(args.prices)
-        candidate, new_metrics = retrain_candidate(data, validation_dates=args.validation_days, top_k=args.top_k)
-        metrics_path = Path(args.model_dir) / "validation_metrics.csv"
-        if not new_metrics:
-            raise RuntimeError("Candidate produced no validation observations")
-        old_metrics = pd.read_csv(metrics_path).iloc[-1].to_dict() if metrics_path.exists() else None
-        if old_metrics is None:
-            save_model(candidate, args.model_dir)
-            pd.DataFrame([new_metrics]).to_csv(metrics_path, index=False)
-            print("accepted: initial validated model")
+        model_dir = Path(args.model_dir)
+        candidate_metrics = evaluate_candidate(
+            data,
+            min_train_days=args.min_train_days,
+            step_days=args.step_days,
+            top_k=args.top_k,
+        )
+        metrics_path = model_dir / "walk_forward_metrics.json"
+        old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None
+        accepted = should_promote(old_metrics, candidate_metrics)
+        print({"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics})
+        if accepted:
+            # Validation decides whether to promote; the promoted model is then
+            # retrained on all currently available history.
+            final_pipe = Pipeline(top_k=args.top_k).train(data)
+            save_model(final_pipe, args.model_dir)
+            save_metrics(args.model_dir, candidate_metrics)
         else:
-            decision = should_accept(old_metrics, new_metrics)
-            print(decision)
-            if decision.accepted:
-                save_model(candidate, args.model_dir)
-                pd.DataFrame([new_metrics]).to_csv(metrics_path, index=False)
+            print("candidate rejected; existing model retained")
     elif args.command == "evaluate":
         print(evaluate(pd.read_csv(args.predictions)))
 
