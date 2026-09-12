@@ -29,20 +29,38 @@ jobs:
           download_nifty500_prices(start="2018-01-01", output="data/prices.csv")
           PY
 
-      - name: Restore incumbent model and metrics
+      - name: Restore latest promoted retrain
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts
-          RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "${RUN_ID}" ]; then
-            gh run download "${RUN_ID}" --name "stock-guru-daily-${RUN_ID}" --dir previous
+          mkdir -p artifacts incumbent
+          RETRAIN_RUN_ID=$(gh run list --workflow retrain.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "${RETRAIN_RUN_ID}" ]; then
+            gh run download "${RETRAIN_RUN_ID}" --name "stock-guru-retrain-${RETRAIN_RUN_ID}" --dir incumbent
             for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
-              src=$(find previous -name "$f" -type f -print -quit 2>/dev/null || true)
+              src=$(find incumbent -name "$f" -type f -print -quit 2>/dev/null || true)
               if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
             done
+          fi
+
+      - name: Restore latest daily model if no promoted retrain exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p daily
+          if [ ! -f artifacts/ranker.joblib ] || [ ! -f artifacts/ohlc.joblib ]; then
+            DAILY_RUN_ID=$(gh run list --workflow daily.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            if [ -n "${DAILY_RUN_ID}" ]; then
+              gh run download "${DAILY_RUN_ID}" --name "stock-guru-daily-${DAILY_RUN_ID}" --dir daily
+              for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
+                src=$(find daily -name "$f" -type f -print -quit 2>/dev/null || true)
+                if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
+              done
+            fi
           fi
 
       - name: Run controlled retraining
@@ -54,7 +72,8 @@ jobs:
             --model-dir artifacts \
             --min-train-days 252 \
             --step-days 20 \
-            --top-k 10 > artifacts/retraining_decision.json
+            --top-k 10 \
+            --decision-output artifacts/retraining_decision.json
 
       - name: Publish retraining decision and model
         uses: actions/upload-artifact@v4
