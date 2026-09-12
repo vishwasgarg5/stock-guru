@@ -6,6 +6,7 @@ from .evaluation import ranking_metrics
 from .feedback import label_predictions, score_labeled
 from .features import build_features
 from .pipeline import Pipeline
+from .regime import regime_label
 
 
 @dataclass
@@ -13,6 +14,7 @@ class FoldResult:
     train_end: str
     prediction_date: str
     metrics: dict
+    regime_metrics: dict | None = None
 
 
 def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> list[FoldResult]:
@@ -26,8 +28,6 @@ def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: in
     normalized = pd.to_datetime(full_features["date"]).dt.normalize()
     raw_dates = pd.to_datetime(raw["date"]).dt.normalize()
 
-    # Precompute the next-session close for every symbol. This is used only for
-    # out-of-sample ranking evaluation after the model has produced its scores.
     actuals = raw[["date", "symbol", "close"]].copy()
     actuals["date"] = pd.to_datetime(actuals["date"]).dt.normalize()
     actuals = actuals.sort_values(["symbol", "date"])
@@ -45,11 +45,10 @@ def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: in
         if day.empty:
             continue
 
-        # Score the full eligible universe for ranking evaluation, then forecast
-        # OHLC only for the selected top-k names.
         scored = pipe.ranker.score(day)
         ranking_base = scored[["date", "symbol", "rank_score"]].copy()
         ranking_base["prediction_date"] = prediction_date
+        ranking_base["market_regime"] = day.set_index("symbol").loc[ranking_base["symbol"], "market_regime"].to_numpy() if "market_regime" in day.columns else "unknown"
         ranking_base = ranking_base.merge(
             actuals[["date", "symbol", "base_close", "next_close"]],
             on=["date", "symbol"], how="left"
@@ -62,6 +61,13 @@ def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: in
         if pred.empty:
             continue
 
+        if "market_regime" in day.columns:
+            regime_map = day[["symbol", "market_ret_20d", "market_volatility_20", "market_breadth"]].drop_duplicates("symbol").set_index("symbol")
+            pred = pred.join(regime_map, on="symbol")
+            pred["market_regime"] = pred.apply(regime_label, axis=1)
+        else:
+            pred["market_regime"] = "unknown"
+
         labeled = label_predictions(pred, raw)
         labeled = labeled[labeled["prediction_date"] == prediction_date]
         if labeled.empty:
@@ -69,6 +75,7 @@ def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: in
 
         metrics = score_labeled(labeled)
         metrics.update(ranking_metrics(ranking_base, k=top_k))
-        results.append(FoldResult(str(train_end.date()), str(prediction_date.date()), metrics))
+        regime_metrics = metrics.pop("regime_metrics", None)
+        results.append(FoldResult(str(train_end.date()), str(prediction_date.date()), metrics, regime_metrics))
 
     return results
