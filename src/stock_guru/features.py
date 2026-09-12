@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .regime import REGIME_FEATURES, add_market_regime_features
+
 BASE_FUNDAMENTALS = [
     "roe", "roce", "eps_growth", "revenue_growth", "pe", "pb",
     "debt_to_equity", "operating_margin", "free_cash_flow",
@@ -52,6 +54,7 @@ def add_targets(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     out = add_targets(add_technical_features(df.copy()))
+    out = add_market_regime_features(out)
     fundamentals = [c for c in BASE_FUNDAMENTALS if c in out.columns]
     technical = [
         "ret_1d", "ret_5d", "ret_20d", "sma_10", "sma_20", "sma_50",
@@ -61,6 +64,6 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         out[f"{c}_ratio"] = out[c] / out["close"] - 1
     technical = [c for c in technical if c not in {"sma_10", "sma_20", "sma_50", "ema_20", "ema_50"}]
     technical += ["sma_10_ratio", "sma_20_ratio", "sma_50_ratio", "ema_20_ratio", "ema_50_ratio"]
-    features = fundamentals + technical
+    features = fundamentals + technical + REGIME_FEATURES
     out[features] = out[features].replace([np.inf, -np.inf], np.nan)
     return out, features
