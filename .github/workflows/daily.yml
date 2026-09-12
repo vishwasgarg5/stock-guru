@@ -29,7 +29,7 @@ jobs:
           RETRAIN_RUN_ID=$(gh run list --workflow retrain.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
           if [ -n "${RETRAIN_RUN_ID}" ]; then
             gh run download "${RETRAIN_RUN_ID}" --name "stock-guru-retrain-${RETRAIN_RUN_ID}" --dir retrained
-            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json; do
+            for f in ranker.joblib ohlc.joblib features.csv walk_forward_metrics.json model_metadata.json; do
               src=$(find retrained -name "$f" -type f -print -quit 2>/dev/null || true)
               if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
             done
@@ -62,7 +62,7 @@ jobs:
       - name: Restore previous model if no promoted model exists
         shell: bash
         run: |
-          for f in ranker.joblib ohlc.joblib features.csv; do
+          for f in ranker.joblib ohlc.joblib features.csv model_metadata.json; do
             if [ ! -f "artifacts/$f" ]; then
               src=$(find previous -name "$f" -type f -print -quit 2>/dev/null || true)
               if [ -n "$src" ]; then cp "$src" "artifacts/$f"; fi
@@ -112,6 +112,7 @@ jobs:
             artifacts/ranker.joblib
             artifacts/ohlc.joblib
             artifacts/features.csv
+            artifacts/model_metadata.json
             artifacts/walk_forward_metrics.json
             data/nifty500_universe.csv
             data/universe_snapshots.csv
