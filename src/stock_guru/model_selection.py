@@ -7,6 +7,33 @@ import pandas as pd
 from .walk_forward import run_walk_forward
 
 
+def _aggregate_regime_metrics(results) -> dict:
+    """Aggregate fold regime metrics using forecast-sample weighting."""
+    buckets: dict[str, list[dict]] = {}
+    for result in results:
+        for regime, metrics in (getattr(result, "regime_metrics", None) or {}).items():
+            buckets.setdefault(str(regime), []).append(metrics)
+
+    aggregated = {}
+    for regime, rows in buckets.items():
+        total = sum(int(row.get("samples", 0)) for row in rows)
+        if total <= 0:
+            continue
+        summary = {"samples": total}
+        keys = {key for row in rows for key in row if key != "samples"}
+        for key in sorted(keys):
+            weighted = [
+                (float(row[key]), int(row.get("samples", 0)))
+                for row in rows
+                if key in row
+            ]
+            denominator = sum(weight for _, weight in weighted)
+            if denominator:
+                summary[key] = float(sum(value * weight for value, weight in weighted) / denominator)
+        aggregated[regime] = summary
+    return aggregated
+
+
 def summarize(results) -> dict:
     if not results:
         raise ValueError("No walk-forward validation results")
@@ -18,6 +45,9 @@ def summarize(results) -> dict:
         if finite:
             out[key] = float(sum(finite) / len(finite))
     out["validation_folds"] = len(results)
+    regime_metrics = _aggregate_regime_metrics(results)
+    if regime_metrics:
+        out["regime_metrics"] = regime_metrics
     return out
 
 
