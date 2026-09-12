@@ -1,6 +1,6 @@
 import pandas as pd
 
-from stock_guru.regime import confidence_from_rank, regime_label
+from stock_guru.regime import add_market_regime_features, confidence_from_rank, regime_label
 
 
 def test_confidence_is_relative_and_ordered():
@@ -25,3 +25,20 @@ def test_high_vol_bear_regime():
         "market_breadth": 0.35,
     })
     assert regime_label(row) == "high_vol_bear"
+
+
+def test_market_returns_are_equal_weighted_not_price_weighted():
+    dates = pd.date_range("2026-01-01", periods=2, freq="D")
+    raw = pd.DataFrame({
+        "date": list(dates) * 2,
+        "symbol": ["LOW", "HIGH", "LOW", "HIGH"],
+        "open": [10, 1000, 10, 1000],
+        "high": [11, 1100, 11, 1100],
+        "low": [9, 900, 9, 900],
+        "close": [10, 1000, 11, 1050],
+        "volume": [100, 100, 100, 100],
+    })
+    result = add_market_regime_features(raw)
+    day_two = result[result["date"] == dates[1]]
+    expected = ((11 / 10 - 1) + (1050 / 1000 - 1)) / 2
+    assert day_two["market_ret_1d"].iloc[0] == expected
