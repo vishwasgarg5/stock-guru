@@ -17,19 +17,29 @@ class RetrainingDecision:
     new_metrics: dict
 
 
-def decide_retraining(old_metrics: dict | None, new_metrics: dict,
-                      rmse_tolerance: float = 0.0,
-                      ranking_tolerance: float = 0.0) -> RetrainingDecision:
+def should_accept(old_metrics: dict, new_metrics: dict,
+                  rmse_tolerance: float = 0.0,
+                  ranking_tolerance: float = 0.0) -> RetrainingDecision:
+    """Backward-compatible decision API used by existing tests and callers."""
     accepted = should_promote(old_metrics, new_metrics,
                               rmse_tolerance=rmse_tolerance,
                               ranking_tolerance=ranking_tolerance)
-    if old_metrics is None:
-        reason = "no incumbent validation metrics; candidate accepted as baseline"
-    elif accepted:
-        reason = "candidate improves forecasting without regressing stock-selection metrics"
-    else:
-        reason = "candidate rejected: incumbent remains better or equal on required validation metrics"
+    reason = (
+        "candidate improves forecasting without regressing stock-selection metrics"
+        if accepted
+        else "candidate rejected: incumbent remains better or equal on required validation metrics"
+    )
     return RetrainingDecision(accepted, reason, old_metrics, new_metrics)
+
+
+def decide_retraining(old_metrics: dict | None, new_metrics: dict,
+                      rmse_tolerance: float = 0.0,
+                      ranking_tolerance: float = 0.0) -> RetrainingDecision:
+    if old_metrics is None:
+        return RetrainingDecision(True,
+                                  "no incumbent validation metrics; candidate accepted as baseline",
+                                  None, new_metrics)
+    return should_accept(old_metrics, new_metrics, rmse_tolerance, ranking_tolerance)
 
 
 def adaptive_retrain(raw: pd.DataFrame, model_dir: str = "artifacts",
