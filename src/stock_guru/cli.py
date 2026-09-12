@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import json
+import os
 import pandas as pd
 from .pipeline import Pipeline
 from .evaluation import evaluate
@@ -17,12 +18,19 @@ def load(path: str) -> pd.DataFrame:
     return df.sort_values(["date", "symbol"])
 
 
-def save_model(pipe: Pipeline, model_dir: str) -> None:
+def save_model(pipe: Pipeline, model_dir: str, *, trained_through=None, validation_metrics=None, model_version=None) -> None:
     out = Path(model_dir)
     out.mkdir(parents=True, exist_ok=True)
     pipe.ranker.save(str(out / "ranker.joblib"))
     pipe.forecaster.save(str(out / "ohlc.joblib"))
     pd.Series(pipe.features).to_csv(out / "features.csv", index=False, header=False)
+    metadata = {
+        "model_version": model_version or os.environ.get("GITHUB_SHA", "local")[:12],
+        "trained_through": str(pd.Timestamp(trained_through).date()) if trained_through is not None else None,
+        "validation_metrics": validation_metrics or {},
+        "features": list(pipe.features),
+    }
+    (out / "model_metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
 
 
 def main() -> None:
@@ -42,15 +50,18 @@ def main() -> None:
         path = download_nifty500_prices(start=args.start, end=args.end, output=args.output)
         print(f"saved {path}")
     elif args.command == "train":
-        pipe = Pipeline().train(load(args.prices)); save_model(pipe, args.model_dir); print(f"trained; features={len(pipe.features)}")
+        data = load(args.prices); pipe = Pipeline().train(data); save_model(pipe, args.model_dir, trained_through=data["date"].max()); print(f"trained; features={len(pipe.features)}")
     elif args.command == "predict":
         from .features import build_features
         from .ranker import StockRanker
         from .ohlc import OHLCForecaster
         data = load(args.prices); feat_data, features = build_features(data)
         ranker = StockRanker.load(str(Path(args.model_dir) / "ranker.joblib")); forecaster = OHLCForecaster.load(str(Path(args.model_dir) / "ohlc.joblib"))
+        metadata_path = Path(args.model_dir) / "model_metadata.json"
+        model_version = "unknown"
+        if metadata_path.exists(): model_version = json.loads(metadata_path.read_text(encoding="utf-8")).get("model_version", model_version)
         day = feat_data[feat_data.date.astype(str).str[:10] == args.date].dropna(subset=features)
-        ranked = ranker.score(day).head(args.top_k); pred = forecaster.predict(ranked); pred["rank"] = range(1, len(pred) + 1); pred["model_version"] = "adaptive-v1"
+        ranked = ranker.score(day).head(args.top_k); pred = forecaster.predict(ranked); pred["rank"] = range(1, len(pred) + 1); pred["model_version"] = model_version
         Path(args.output).parent.mkdir(parents=True, exist_ok=True); pred.to_csv(args.output, index=False); print(pred.to_string(index=False))
     elif args.command == "feedback":
         from .feedback import label_predictions, append_feedback
@@ -76,7 +87,7 @@ def main() -> None:
             cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max()
             training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy()
             if training.empty: raise ValueError("No historical sessions remain before the retraining prediction date")
-            final_pipe = Pipeline(top_k=args.top_k).train(training); save_model(final_pipe, args.model_dir); save_metrics(args.model_dir, candidate_metrics); decision["trained_through"] = str(training["date"].max().date())
+            final_pipe = Pipeline(top_k=args.top_k).train(training); save_model(final_pipe, args.model_dir, trained_through=training["date"].max(), validation_metrics=candidate_metrics); save_metrics(args.model_dir, candidate_metrics); decision["trained_through"] = str(training["date"].max().date())
         else: decision["reason"] = "candidate rejected; existing model retained"
         if args.decision_output:
             output = Path(args.decision_output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(decision, indent=2, default=str), encoding="utf-8")
