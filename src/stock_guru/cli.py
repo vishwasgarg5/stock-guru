@@ -32,7 +32,7 @@ def main() -> None:
     tr = sub.add_parser("train"); tr.add_argument("--prices", required=True); tr.add_argument("--model-dir", default="artifacts")
     pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
     fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv"); fb.add_argument("--metrics-output", default="artifacts/feedback_metrics.json")
-    rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10); rt.add_argument("--decision-output", default=None)
+    rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10); rt.add_argument("--prediction-date", default=None); rt.add_argument("--decision-output", default=None)
     bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     args = parser.parse_args()
@@ -88,9 +88,14 @@ def main() -> None:
         accepted = should_promote(old_metrics, candidate_metrics)
         decision = {"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics}
         if accepted:
-            final_pipe = Pipeline(top_k=args.top_k).train(data)
+            cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max()
+            training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy()
+            if training.empty:
+                raise ValueError("No historical sessions remain before the retraining prediction date")
+            final_pipe = Pipeline(top_k=args.top_k).train(training)
             save_model(final_pipe, args.model_dir)
             save_metrics(args.model_dir, candidate_metrics)
+            decision["trained_through"] = str(training["date"].max().date())
         else:
             decision["reason"] = "candidate rejected; existing model retained"
         if args.decision_output:
