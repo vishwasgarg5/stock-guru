@@ -17,6 +17,21 @@ def save_model(pipe: Pipeline, model_dir: Path) -> None:
     pd.Series(pipe.features).to_csv(model_dir / "features.csv", index=False, header=False)
 
 
+def train_before_prediction_date(market: pd.DataFrame, prediction_date: pd.Timestamp) -> Pipeline:
+    """Train strictly on sessions before the live prediction session.
+
+    The prediction session's close/high/low/open must never be available to model
+    fitting, even when its target is later dropped as unavailable.
+    """
+    normalized = pd.to_datetime(market["date"]).dt.normalize()
+    train = market.loc[normalized < prediction_date].copy()
+    if train.empty:
+        raise RuntimeError(
+            f"No historical sessions exist before prediction date {prediction_date.date()}"
+        )
+    return Pipeline().train(train)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Run the daily Stock Guru data/prediction cycle")
     p.add_argument("--start", default="2018-01-01")
@@ -38,13 +53,14 @@ def main() -> None:
     available_dates = pd.to_datetime(market["date"]).dt.normalize().drop_duplicates().sort_values()
     latest_date = available_dates.iloc[-1].date().isoformat()
     prediction_date = args.prediction_date or latest_date
-    if pd.Timestamp(prediction_date).normalize() not in set(available_dates):
+    prediction_ts = pd.Timestamp(prediction_date).normalize()
+    if prediction_ts not in set(available_dates):
         raise ValueError(f"Prediction date {prediction_date} is not an available market session")
 
     model_dir = Path(args.model_dir)
     if not (model_dir / "ranker.joblib").exists() or not (model_dir / "ohlc.joblib").exists():
-        print("No trained model found; training on the refreshed market history.")
-        save_model(Pipeline(top_k=args.top_k).train(market), model_dir)
+        print(f"No trained model found; training only on history before {prediction_ts.date()}.")
+        save_model(train_before_prediction_date(market, prediction_ts), model_dir)
 
     predictions = predict_daily(
         args.prices,
