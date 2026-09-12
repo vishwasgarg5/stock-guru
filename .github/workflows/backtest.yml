@@ -23,6 +23,8 @@ on:
         description: "Round-trip transaction cost assumption in basis points"
         required: false
         default: "10"
+  schedule:
+    - cron: "0 2 * * 0"
 
 jobs:
   backtest:
@@ -41,17 +43,17 @@ jobs:
       - name: Download historical NIFTY 500 prices
         run: >-
           PYTHONPATH=src python -m stock_guru.cli download
-          --start "${{ inputs.start }}"
+          --start "${{ inputs.start || '2018-01-01' }}"
           --output data/prices.csv
 
       - name: Run leakage-safe walk-forward strategy backtest
         run: >-
           PYTHONPATH=src python -m stock_guru.cli backtest
           --prices data/prices.csv
-          --min-train-days ${{ inputs.min_train_days }}
-          --step-days ${{ inputs.step_days }}
-          --top-k ${{ inputs.top_k }}
-          --transaction-cost-bps ${{ inputs.transaction_cost_bps }}
+          --min-train-days ${{ inputs.min_train_days || '252' }}
+          --step-days ${{ inputs.step_days || '20' }}
+          --top-k ${{ inputs.top_k || '10' }}
+          --transaction-cost-bps ${{ inputs.transaction_cost_bps || '10' }}
           --output-dir artifacts/backtest
 
       - name: Publish backtest artifacts
