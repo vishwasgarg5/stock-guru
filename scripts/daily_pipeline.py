@@ -4,8 +4,11 @@ import argparse
 from pathlib import Path
 from datetime import date, timedelta
 
+import pandas as pd
+
 from stock_guru.data import download_nifty500_prices
 from stock_guru.daily import predict_daily
+from stock_guru.pipeline import Pipeline
 
 
 def main() -> None:
@@ -19,12 +22,22 @@ def main() -> None:
     p.add_argument("--output", default="artifacts/daily_predictions.csv")
     args = p.parse_args()
 
-    # Refresh the market data before prediction. The downloader also persists the
-    # current NIFTY 500 membership snapshot for later point-in-time universe work.
     yesterday = date.today() - timedelta(days=1)
     download_nifty500_prices(args.start, yesterday.isoformat(), args.prices)
 
-    prediction_date = args.prediction_date or yesterday.isoformat()
+    market = pd.read_csv(args.prices, parse_dates=["date"])
+    latest_date = market["date"].max().date().isoformat()
+    prediction_date = args.prediction_date or latest_date
+
+    model_dir = Path(args.model_dir)
+    if not (model_dir / "ranker.joblib").exists() or not (model_dir / "ohlc.joblib").exists():
+        print("No trained model found; training on the refreshed market history.")
+        pipe = Pipeline(top_k=args.top_k).train(market)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        pipe.ranker.save(str(model_dir / "ranker.joblib"))
+        pipe.forecaster.save(str(model_dir / "ohlc.joblib"))
+        pd.Series(pipe.features).to_csv(model_dir / "features.csv", index=False, header=False)
+
     predictions = predict_daily(
         args.prices,
         args.model_dir,
@@ -35,7 +48,7 @@ def main() -> None:
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     predictions.to_csv(args.output, index=False)
     print(predictions.to_string(index=False))
-    print(f"Saved {len(predictions)} predictions to {args.output}")
+    print(f"Saved {len(predictions)} predictions for {prediction_date} to {args.output}")
 
 
 if __name__ == "__main__":
