@@ -9,7 +9,13 @@ from .pipeline import Pipeline
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
     """Join a prediction made for date D to the next available OHLC for that symbol."""
     p = predictions.copy()
-    p["date"] = pd.to_datetime(p["date"]).dt.normalize()
+    if "date" in p.columns:
+        p["date"] = pd.to_datetime(p["date"]).dt.normalize()
+    elif "prediction_date" in p.columns:
+        p["prediction_date"] = pd.to_datetime(p["prediction_date"]).dt.normalize()
+    else:
+        raise ValueError("Predictions must contain date or prediction_date")
+
     m = market.copy()
     m["date"] = pd.to_datetime(m["date"]).dt.normalize()
     m = m.sort_values(["symbol", "date"])
@@ -19,9 +25,23 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
         "open": "actual_open", "high": "actual_high",
         "low": "actual_low", "close": "actual_close",
     })
-    return p.rename(columns={"date": "prediction_date"}).merge(
-        actual.drop(columns=["date"]), on=["prediction_date", "symbol"], how="inner"
+
+    if "date" in p.columns:
+        p = p.rename(columns={"date": "prediction_date"})
+    labeled = p.merge(
+        actual.drop(columns=["date"]),
+        on=["prediction_date", "symbol"], how="inner"
     )
+    if "base_close" not in labeled.columns and "close" in labeled.columns:
+        labeled["base_close"] = labeled["close"]
+    labeled["prediction_date"] = pd.to_datetime(labeled["prediction_date"]).dt.normalize()
+    labeled["actual_return"] = labeled["actual_close"] / labeled["base_close"] - 1.0
+    labeled["predicted_return"] = labeled["pred_close"] / labeled["base_close"] - 1.0
+    labeled["return_error"] = labeled["actual_return"] - labeled["predicted_return"]
+    labeled["direction_correct"] = (
+        labeled["actual_return"].ge(0) == labeled["predicted_return"].ge(0)
+    )
+    return labeled
 
 
 def score_labeled(labeled: pd.DataFrame) -> dict:
