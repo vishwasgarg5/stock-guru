@@ -43,9 +43,7 @@ def predict_daily(prices_path: str, model_dir: str, prediction_date: str,
     pred["rank"] = range(1, len(pred) + 1)
     pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
 
-    regime_columns = ["market_ret_20d", "market_volatility_20d", "market_breadth"]
-    if "market_volatility_20d" not in day.columns:
-        regime_columns = ["market_ret_20d", "market_volatility_20", "market_breadth"]
+    regime_columns = ["market_ret_20d", "market_volatility_20", "market_breadth"]
     risk_columns = ["symbol", "atr_pct_14", "volatility_20", "sector", *regime_columns]
     available = [c for c in risk_columns if c in ranked.columns]
     pred = pred.merge(ranked[available].drop_duplicates("symbol"), on="symbol", how="left")
