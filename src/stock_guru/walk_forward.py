@@ -6,7 +6,7 @@ from .evaluation import ranking_metrics
 from .feedback import label_predictions, score_labeled
 from .features import build_features
 from .pipeline import Pipeline
-from .regime import regime_label
+from .regime import confidence_from_rank, regime_label
 
 
 @dataclass
@@ -54,8 +54,7 @@ def run_walk_forward_with_predictions(
         ranking_base = scored[["date", "symbol", "rank_score"]].copy()
         ranking_base["prediction_date"] = prediction_date
         ranking_base["market_regime"] = (
-            day.set_index("symbol").loc[ranking_base["symbol"], "market_regime"].to_numpy()
-            if "market_regime" in day.columns else "unknown"
+            day["market_regime"].iloc[0] if "market_regime" in day.columns else "unknown"
         )
         ranking_base = ranking_base.merge(
             actuals[["date", "symbol", "base_close", "next_close"]],
@@ -63,20 +62,24 @@ def run_walk_forward_with_predictions(
         ).dropna(subset=["base_close", "next_close"])
         ranking_base["actual_close"] = ranking_base["next_close"]
 
-        ranked = scored.head(top_k)
+        ranked = scored.head(top_k).copy()
         pred = pipe.forecaster.predict(ranked)
         if pred.empty:
             continue
 
-        if "market_regime" in day.columns:
-            regime_map = (
-                day[["symbol", "market_ret_20d", "market_volatility_20", "market_breadth"]]
-                .drop_duplicates("symbol").set_index("symbol")
-            )
-            pred = pred.join(regime_map, on="symbol")
-            pred["market_regime"] = pred.apply(regime_label, axis=1)
-        else:
-            pred["market_regime"] = "unknown"
+        pred["rank"] = range(1, len(pred) + 1)
+        pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
+        pred["market_regime"] = (
+            regime_label(day.iloc[0]) if "market_regime" in day.columns else "unknown"
+        )
+
+        # Preserve risk inputs from the prediction-time feature row. The
+        # previous implementation dropped these columns when converting the
+        # ranked frame into OHLC forecasts, causing every backtest trade to
+        # fail closed on missing ATR/volatility/confidence fields.
+        risk_columns = ["atr_pct_14", "volatility_20"]
+        risk_frame = ranked[["symbol", *risk_columns]].copy()
+        pred = pred.merge(risk_frame, on="symbol", how="left", validate="one_to_one")
 
         labeled = label_predictions(pred, raw)
         labeled = labeled[labeled["prediction_date"] == prediction_date].copy()
