@@ -90,8 +90,28 @@ def _metric(metrics: dict, key: str, default: float) -> float:
 
 
 def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
-                   ranking_tolerance: float = 0.0, feedback: dict | None = None) -> bool:
-    """Promote only after validation improvement and live-feedback sanity checks."""
+                   ranking_tolerance: float = 0.0, feedback: dict | None = None,
+                   min_validation_folds: int = 20, min_regime_samples: int = 10,
+                   min_adverse_regime_direction: float = 0.45) -> bool:
+    """Promote only after robust OOS improvement and live/regime sanity checks.
+
+    Legacy metric dictionaries without validation_folds/regime_metrics remain
+    supported for compatibility tests and older persisted artifacts. New
+    walk-forward summaries are held to minimum validation coverage and an
+    adverse-regime directional-accuracy floor when enough samples exist.
+    """
+    if "validation_folds" in new and _metric(new, "validation_folds", 0.0) < min_validation_folds:
+        return False
+
+    regime_metrics = new.get("regime_metrics") or {}
+    for regime in ("bear", "high_vol_bear"):
+        metrics = regime_metrics.get(regime) or {}
+        samples = _metric(metrics, "samples", 0.0)
+        if samples >= min_regime_samples:
+            direction = _metric(metrics, "close_direction_accuracy", float("nan"))
+            if not math.isfinite(direction) or direction < min_adverse_regime_direction:
+                return False
+
     old_rmse = _metric(old, "pred_close_rmse", float("inf")) if old else float("inf")
     old_direction = _metric(old, "close_direction_accuracy", 0.0) if old else 0.0
     new_rmse = _metric(new, "pred_close_rmse", float("inf"))
