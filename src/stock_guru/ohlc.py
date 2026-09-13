@@ -4,6 +4,8 @@ import joblib
 import pandas as pd
 from xgboost import XGBRegressor
 
+from .regime import regime_label
+
 TARGETS = ["target_open", "target_high", "target_low", "target_close"]
 
 
@@ -19,11 +21,18 @@ class OHLCForecaster:
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
 
+    @staticmethod
+    def regime_weights(train: pd.DataFrame) -> pd.Series:
+        """Emphasize adverse regimes using only prediction-time features."""
+        labels = train.apply(regime_label, axis=1)
+        return labels.map({"bear": 2.0, "high_vol_bear": 2.5}).fillna(1.0).astype(float)
+
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
-        train = df.dropna(subset=features + TARGETS)
+        train = df.dropna(subset=features + TARGETS).copy()
+        weights = self.regime_weights(train)
         for target, model in self.models.items():
-            model.fit(train[features], train[target])
+            model.fit(train[features], train[target], sample_weight=weights)
         return self
 
     @staticmethod
