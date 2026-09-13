@@ -75,3 +75,33 @@ def test_high_vol_bear_caps_total_exposure():
     out = final_trade_decision(df)
     assert out["position_weight"].sum() <= 0.50 + 1e-12
     assert (out["position_weight"] <= 0.075 + 1e-12).all()
+
+
+def test_bear_regime_requires_higher_confidence_and_return():
+    df = pd.DataFrame({
+        "symbol": ["LOW", "HIGH"],
+        "close": [100.0, 100.0],
+        "pred_close": [100.3, 100.5],
+        "rank_confidence": [0.69, 0.70],
+        "atr_pct_14": [0.04, 0.04],
+        "volatility_20": [0.04, 0.04],
+        "market_regime": ["bear", "bear"],
+    })
+    out = final_trade_decision(df)
+    assert out.loc[out["symbol"] == "LOW", "decision"].iloc[0] == "NO_TRADE"
+    assert out.loc[out["symbol"] == "HIGH", "decision"].iloc[0] == "TRADE"
+
+
+def test_bear_regime_exposure_is_capped():
+    df = pd.DataFrame({
+        "symbol": list("ABCDEFG"),
+        "close": [100.0] * 7,
+        "pred_close": [105.0] * 7,
+        "rank_confidence": [1.0] * 7,
+        "atr_pct_14": [0.01] * 7,
+        "volatility_20": [0.04] * 7,
+        "market_regime": ["bear"] * 7,
+    })
+    out = final_trade_decision(df)
+    assert out["position_weight"].sum() <= 0.50 + 1e-12
+    assert (out["position_weight"] <= 0.10 + 1e-12).all()
