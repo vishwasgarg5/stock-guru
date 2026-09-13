@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .backtest import backtest
+from .backtest import backtest, cost_sensitivity
 from .walk_forward import run_walk_forward_with_predictions
 from .risk import final_trade_decision
 
@@ -32,10 +32,12 @@ def run_strategy_walk_forward(raw: pd.DataFrame, min_train_days: int = 252,
 
     predictions = pd.concat(all_predictions, ignore_index=True)
     portfolio = backtest(predictions, transaction_cost_bps=transaction_cost_bps)
+    sensitivity = cost_sensitivity(predictions)
     return {
         "folds": len(fold_results),
         "prediction_rows": len(predictions),
         "portfolio": portfolio,
+        "cost_sensitivity": sensitivity,
         "fold_results": fold_results,
         "predictions": predictions,
     }
