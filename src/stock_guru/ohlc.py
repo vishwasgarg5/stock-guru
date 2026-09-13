@@ -23,9 +23,9 @@ class OHLCForecaster:
 
     @staticmethod
     def regime_weights(train: pd.DataFrame) -> pd.Series:
-        """Emphasize adverse regimes using only prediction-time features."""
+        """Apply a modest adverse-regime emphasis without dominating normal regimes."""
         labels = train.apply(regime_label, axis=1)
-        return labels.map({"bear": 2.0, "high_vol_bear": 2.5}).fillna(1.0).astype(float)
+        return labels.map({"bear": 1.25, "high_vol_bear": 1.5}).fillna(1.0).astype(float)
 
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
