@@ -29,12 +29,33 @@ def _safe_float(value, default=float("nan")) -> float:
 def _regime_config(config: RiskConfig, regime: str) -> RiskConfig:
     """Tighten portfolio risk limits for adverse market regimes."""
     adjustments = {
-        "high_vol_bear": dict(max_position_pct=0.075, max_sector_pct=0.20, max_total_exposure_pct=0.50,
-                               min_confidence=0.70, max_atr_pct=0.06, max_volatility_20=0.045),
-        "high_volatility": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.70,
-                                min_confidence=0.65, max_atr_pct=0.07, max_volatility_20=0.05),
-        "bear": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.70,
-                     min_confidence=0.65, max_atr_pct=0.07, max_volatility_20=0.05),
+        "high_vol_bear": dict(
+            max_position_pct=0.075,
+            max_sector_pct=0.20,
+            max_total_exposure_pct=0.50,
+            min_confidence=0.70,
+            max_atr_pct=0.06,
+            max_volatility_20=0.045,
+            min_expected_return=0.004,
+        ),
+        "high_volatility": dict(
+            max_position_pct=0.10,
+            max_sector_pct=0.25,
+            max_total_exposure_pct=0.70,
+            min_confidence=0.65,
+            max_atr_pct=0.07,
+            max_volatility_20=0.05,
+            min_expected_return=0.003,
+        ),
+        "bear": dict(
+            max_position_pct=0.10,
+            max_sector_pct=0.25,
+            max_total_exposure_pct=0.50,
+            min_confidence=0.70,
+            max_atr_pct=0.07,
+            max_volatility_20=0.05,
+            min_expected_return=0.004,
+        ),
         "bull": dict(max_total_exposure_pct=1.00),
         "neutral": dict(),
         "unknown": dict(),
@@ -69,7 +90,7 @@ def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = No
         _safe_float(out.get("volatility_20", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_volatility_20
         for idx in out.index
     ]
-    checks["return_ok"] = out["expected_return"] >= cfg.min_expected_return
+    checks["return_ok"] = out["expected_return"] >= effective.map(lambda c: c.min_expected_return)
 
     # Missing risk inputs fail closed rather than silently bypassing protection.
     for col in ["atr_pct_14", "volatility_20"]:
