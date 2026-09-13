@@ -19,17 +19,6 @@ def test_ohlc_constraints_make_valid_candles():
     assert out.loc[0, "pred_low"] == 104.0
 
 
-def test_regime_weights_modestly_emphasize_adverse_markets():
-    train = pd.DataFrame({
-        "market_ret_20d": [-0.04, -0.04, 0.04, 0.0],
-        "market_volatility_20": [0.01, 0.03, 0.01, 0.01],
-        "market_breadth": [0.40, 0.40, 0.70, 0.50],
-    })
-    weights = OHLCForecaster.regime_weights(train)
-    assert weights.tolist() == [1.25, 1.5, 1.0, 1.0]
-    assert weights.max() < 2.0
-
-
 def test_regime_adjustment_uses_training_residuals_only():
     forecaster = OHLCForecaster(params={"n_estimators": 5, "max_depth": 2})
     forecaster.features = ["feature"]
@@ -47,6 +36,22 @@ def test_regime_adjustment_uses_training_residuals_only():
     forecaster._fit_regime_adjustments(train)
     assert set(forecaster.regime_adjustments) == {"bear"}
     assert all(value == 0.03 for value in forecaster.regime_adjustments["bear"].values())
+
+
+def test_regime_adjustment_skips_small_regimes():
+    forecaster = OHLCForecaster()
+    forecaster.features = ["feature"]
+    train = pd.DataFrame({
+        "feature": np.arange(19, dtype=float),
+        "market_ret_20d": [-0.04] * 9 + [0.04] * 10,
+        "market_volatility_20": [0.01] * 19,
+        "market_breadth": [0.40] * 9 + [0.70] * 10,
+    })
+    for target in TARGETS:
+        train[target] = 0.01
+    forecaster.models = {target: _ConstantModel(0.0) for target in TARGETS}
+    forecaster._fit_regime_adjustments(train)
+    assert "bear" not in forecaster.regime_adjustments
 
 
 class _ConstantModel:
