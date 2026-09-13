@@ -18,9 +18,8 @@ def _aggregate_fold_regimes(folds) -> dict:
         if sample_total <= 0:
             continue
         aggregated = {"samples": sample_total}
-        for key in rows[0]:
-            if key == "samples":
-                continue
+        keys = {key for row in rows for key in row if key != "samples"}
+        for key in sorted(keys):
             values = [(float(row[key]), int(row.get("samples", 0))) for row in rows if key in row]
             if values:
                 denominator = sum(weight for _, weight in values)
@@ -30,12 +29,16 @@ def _aggregate_fold_regimes(folds) -> dict:
 
 
 def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -> dict:
-    """Persist portfolio metrics, fold metrics, and regime diagnostics."""
+    """Persist portfolio metrics, cost sensitivity, fold metrics, and regime diagnostics."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     portfolio = result.get("portfolio", {})
     (out / "metrics.json").write_text(json.dumps(portfolio, indent=2, default=str), encoding="utf-8")
+
+    cost_sensitivity = result.get("cost_sensitivity")
+    if cost_sensitivity:
+        (out / "cost_sensitivity.json").write_text(json.dumps(cost_sensitivity, indent=2, default=str), encoding="utf-8")
 
     folds = result.get("fold_results", [])
     regime_metrics = _aggregate_fold_regimes(folds)
@@ -54,6 +57,7 @@ def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -
 
     return {
         "metrics": str(out / "metrics.json"),
+        "cost_sensitivity": str(out / "cost_sensitivity.json") if cost_sensitivity else None,
         "regime_metrics": str(out / "regime_metrics.json"),
         "fold_metrics": str(out / "fold_metrics.csv"),
         "trades": str(out / "trades.csv"),
