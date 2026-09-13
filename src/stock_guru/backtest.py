@@ -32,7 +32,7 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
     """Backtest daily risk-approved positions using next-session close returns.
 
     Predictions must represent decisions made before the next trading session and
-    contain prediction_date, symbol, position_weight, trade, actual_close.
+    contain prediction_date, symbol, position_weight, trade, base_close, actual_close.
     """
     required = {"prediction_date", "symbol", "position_weight", "trade", "base_close", "actual_close"}
     missing = required - set(predictions.columns)
@@ -100,4 +100,14 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
             result["benchmark_sharpe"] = float(bret.mean() / bret.std(ddof=1) * np.sqrt(252)) if bret.std(ddof=1) > 0 else 0.0
             result["benchmark_max_drawdown"] = float(((1.0 + bret).cumprod() / (1.0 + bret).cumprod().cummax() - 1.0).min())
 
+    return result
+
+
+def cost_sensitivity(predictions: pd.DataFrame, cost_scenarios_bps=(0.0, 10.0, 25.0, 50.0)) -> dict:
+    """Evaluate the same OOS trades under multiple transaction-cost assumptions."""
+    result = {}
+    for bps in cost_scenarios_bps:
+        result[str(float(bps)).rstrip("0").rstrip(".")] = backtest(
+            predictions, transaction_cost_bps=float(bps)
+        )
     return result
