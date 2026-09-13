@@ -51,11 +51,10 @@ def run_walk_forward_with_predictions(
             continue
 
         scored = pipe.ranker.score(day)
+        market_regime = regime_label(day.iloc[0])
         ranking_base = scored[["date", "symbol", "rank_score"]].copy()
         ranking_base["prediction_date"] = prediction_date
-        ranking_base["market_regime"] = (
-            day["market_regime"].iloc[0] if "market_regime" in day.columns else "unknown"
-        )
+        ranking_base["market_regime"] = market_regime
         ranking_base = ranking_base.merge(
             actuals[["date", "symbol", "base_close", "next_close"]],
             on=["date", "symbol"], how="left"
@@ -69,9 +68,7 @@ def run_walk_forward_with_predictions(
 
         pred["rank"] = range(1, len(pred) + 1)
         pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
-        pred["market_regime"] = (
-            regime_label(day.iloc[0]) if "market_regime" in day.columns else "unknown"
-        )
+        pred["market_regime"] = market_regime
 
         # Preserve risk inputs from the prediction-time feature row. The
         # previous implementation dropped these columns when converting the
