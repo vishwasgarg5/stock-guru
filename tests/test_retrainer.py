@@ -31,6 +31,45 @@ def test_promotion_respects_accumulated_feedback_direction_accuracy():
     assert not should_promote(old, new, feedback=feedback)
 
 
+def test_promotion_rejects_insufficient_validation_folds():
+    old = {"pred_close_rmse": 2.0, "close_direction_accuracy": 0.60}
+    new = {"pred_close_rmse": 1.9, "close_direction_accuracy": 0.61, "validation_folds": 19}
+    assert not should_promote(old, new)
+
+
+def test_promotion_rejects_weak_bear_regime_direction_accuracy():
+    old = {"pred_close_rmse": 2.0, "close_direction_accuracy": 0.50}
+    new = {
+        "pred_close_rmse": 1.9,
+        "close_direction_accuracy": 0.51,
+        "validation_folds": 20,
+        "regime_metrics": {"bear": {"samples": 50, "close_direction_accuracy": 0.44}},
+    }
+    assert not should_promote(old, new)
+
+
+def test_promotion_accepts_robust_adverse_regime_candidate():
+    old = {"pred_close_rmse": 2.0, "close_direction_accuracy": 0.50, "top_k_excess_return": 0.004, "precision_at_k": 0.55}
+    new = {
+        "pred_close_rmse": 1.9,
+        "close_direction_accuracy": 0.51,
+        "top_k_excess_return": 0.005,
+        "precision_at_k": 0.56,
+        "validation_folds": 20,
+        "regime_metrics": {
+            "bear": {"samples": 50, "close_direction_accuracy": 0.45},
+            "high_vol_bear": {"samples": 10, "close_direction_accuracy": 0.50},
+        },
+    }
+    assert should_promote(old, new)
+
+
+def test_promotion_keeps_legacy_metric_dicts_compatible():
+    old = {"pred_close_rmse": 2.0, "close_direction_accuracy": 0.60}
+    new = {"pred_close_rmse": 1.9, "close_direction_accuracy": 0.61}
+    assert should_promote(old, new)
+
+
 def test_feedback_summary_requires_minimum_history():
     feedback = pd.DataFrame({"direction_correct": [True] * 19, "return_error": [0.01] * 19})
     assert summarize_feedback(feedback) is None
