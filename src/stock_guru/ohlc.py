@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import joblib
+import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
@@ -20,19 +21,33 @@ class OHLCForecaster:
             base.update(params)
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
+        self.regime_adjustments: dict[str, dict[str, float]] = {}
 
-    @staticmethod
-    def regime_weights(train: pd.DataFrame) -> pd.Series:
-        """Apply a modest adverse-regime emphasis without dominating normal regimes."""
+    def _fit_regime_adjustments(self, train: pd.DataFrame) -> None:
+        """Learn small additive residual corrections from training data only."""
         labels = train.apply(regime_label, axis=1)
-        return labels.map({"bear": 1.25, "high_vol_bear": 1.5}).fillna(1.0).astype(float)
+        residuals = pd.DataFrame(index=train.index)
+        for target, model in self.models.items():
+            residuals[target] = train[target] - model.predict(train[self.features])
+
+        adjustments: dict[str, dict[str, float]] = {}
+        for label in ("bear", "high_vol_bear"):
+            mask = labels.eq(label)
+            if mask.sum() < 10:
+                continue
+            adjustments[label] = {
+                target: float(residuals.loc[mask, target].median())
+                for target in TARGETS
+            }
+        self.regime_adjustments = adjustments
 
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
         train = df.dropna(subset=features + TARGETS).copy()
-        weights = self.regime_weights(train)
+        weights = pd.Series(1.0, index=train.index)
         for target, model in self.models.items():
             model.fit(train[features], train[target], sample_weight=weights)
+        self._fit_regime_adjustments(train)
         return self
 
     @staticmethod
@@ -51,6 +66,14 @@ class OHLCForecaster:
         out = df[metadata].copy()
         for target, model in self.models.items():
             out[target.replace("target_", "pred_")] = model.predict(df[self.features])
+
+        if self.regime_adjustments:
+            labels = df.apply(regime_label, axis=1)
+            for label, corrections in self.regime_adjustments.items():
+                mask = labels.eq(label)
+                for target, correction in corrections.items():
+                    out.loc[mask, target.replace("target_", "pred_")] += correction
+
         base = out["close"]
         out["pred_open"] = base * (1 + out["pred_open"])
         out["pred_high"] = base * (1 + out["pred_high"])
