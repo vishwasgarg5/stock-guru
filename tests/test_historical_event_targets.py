@@ -12,6 +12,7 @@ FILES = {
     "ind_prs16092022": ROOT / "data" / "nifty500_events_2022_09_amalgamation.csv",
     "ind_prs17082023": ROOT / "data" / "nifty500_events_2023_09.csv",
     "ind_prs17102023": ROOT / "data" / "nifty500_events_2023_10.csv",
+    "ind_prs28022024": ROOT / "data" / "nifty500_events_2024_03.csv",
     "ind_prs23082024": ROOT / "data" / "nifty500_events_2024_09_final.csv",
     "ind_prs25092024": ROOT / "data" / "nifty500_events_2024_09_final.csv",
     "ind_prs21022025": ROOT / "data" / "nifty500_events_2025_2024.csv",
