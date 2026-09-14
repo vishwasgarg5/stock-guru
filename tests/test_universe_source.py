@@ -3,13 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from stock_guru.universe_source import (
-    file_sha256,
-    load_source_manifest,
-    validate_historical_snapshots,
-    validate_source_bundle,
-    validate_source_manifest,
-)
+from stock_guru.universe_source import file_sha256, load_source_manifest, validate_historical_snapshots, validate_source_bundle, validate_source_manifest
 
 
 def manifest():
@@ -58,3 +52,14 @@ def test_source_bundle_requires_manifest(tmp_path):
     snapshots.write_text("as_of,symbol\n2024-01-31,A\n", encoding="utf-8")
     with pytest.raises(FileNotFoundError):
         validate_source_bundle(snapshots, tmp_path / "missing.json")
+
+
+def test_source_bundle_rejects_mutated_source(tmp_path):
+    snapshots = tmp_path / "snapshots.csv"
+    snapshots.write_text("as_of,symbol\n2024-01-31,A\n", encoding="utf-8")
+    m = manifest()
+    m["source_sha256"] = "0" * 64
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(ValueError, match="fingerprint"):
+        validate_source_bundle(snapshots, manifest_path)
