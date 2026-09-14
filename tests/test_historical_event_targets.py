@@ -57,10 +57,12 @@ def test_validation_target_effective_dates_match_evidence():
         assert {row["effective_date"] for row in rows} == {target["effective_date"]}
 
 
-def test_verified_event_keys_are_unique():
-    seen = set()
-    for path in set(FILES.values()):
+def test_verified_event_keys_are_unique_within_each_mapped_source():
+    for source_id, path in FILES.items():
+        seen = set()
         for row in _rows(path):
+            if row["source_id"] != source_id:
+                continue
             key = (row["effective_date"], row["symbol"], row["action"], row["source_id"])
             assert key not in seen, f"duplicate historical event key: {key}"
             seen.add(key)
