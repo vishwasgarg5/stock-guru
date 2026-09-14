@@ -13,11 +13,21 @@ Adaptive NIFTY 500 stock-selection and next-day OHLC forecasting pipeline.
 
 ## Current implementation
 
-The repository now contains the model baseline plus a market-data bootstrap layer. The current data layer fetches the current NIFTY 500 universe from NSE Indices and downloads daily NSE OHLCV history through yfinance. NSE Indices describes NIFTY 500 as a 500-company broad-market index and publishes its constituent data through its index resources. For historical research, persist dated constituent snapshots because today's universe is not a valid proxy for every historical NIFTY 500 membership.
+The repository contains the model baseline plus guarded infrastructure for point-in-time research, paper execution, feedback settlement, and an optional temporal challenger. The bootstrap data layer fetches the current NIFTY 500 universe and daily NSE OHLCV history. Current constituents are useful for pipeline development, but are not a substitute for historical constituent membership.
+
+## Roadmap status
+
+- **Step 24 — Point-in-time universe:** interval builder and as-of filtering are implemented. Real historical NIFTY 500 constituent snapshots still need to be populated from a trustworthy historical source.
+- **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
+- **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
+- **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
+- **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
 
 ## Design
 
 - `src/stock_guru/data.py`: current NIFTY 500 universe + OHLCV ingestion.
+- `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
+- `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
 - `src/stock_guru/features.py`: leakage-safe technical/fundamental feature engineering.
 - `src/stock_guru/ranker.py`: XGBoost learning-to-rank stock selector.
 - `src/stock_guru/ohlc.py`: four XGBoost regressors for normalized next-day OHLC returns.
@@ -25,8 +35,11 @@ The repository now contains the model baseline plus a market-data bootstrap laye
 - `src/stock_guru/pipeline.py`: train/predict orchestration.
 - `src/stock_guru/walk_forward.py`: expanding-window validation.
 - `src/stock_guru/retrainer.py`: validation-gated model replacement and labeled prediction storage.
+- `src/stock_guru/feedback.py`: next-session prediction settlement and feedback labeling.
+- `src/stock_guru/paper_trading.py`: paper execution with costs and position limits.
+- `src/stock_guru/temporal_challenger.py`: optional isolated LSTM challenger.
 - `src/stock_guru/cli.py`: command-line entry point.
-- `tests/`: smoke tests.
+- `tests/`: regression and smoke tests.
 
 ## Data contract
 
@@ -67,6 +80,10 @@ PYTHONPATH=src python -m stock_guru.cli predict --prices data/prices.csv --model
 
 Use `stock_guru.walk_forward.run_walk_forward()` with an expanding training window. Do not use random train/test splits for this time-series problem.
 
+## Paper trading
+
+`stock_guru.paper_trading.execute_signals()` consumes accepted prediction signals and enters at the first subsequent session open, applying configured slippage, commission, and position caps. Use `save_trades()` for idempotent persistence.
+
 ## Important research limitation
 
-The next major data task is **point-in-time fundamentals and point-in-time NIFTY 500 membership**. Current fundamentals or today's constituent list must not be retroactively applied to historical dates, otherwise the reported model performance will be contaminated by look-ahead/survivorship bias.
+The remaining data work is **real point-in-time NIFTY 500 membership and filing-derived fundamentals**. Until those sources are populated and validated, historical performance must not be described as survivorship-bias-free.
