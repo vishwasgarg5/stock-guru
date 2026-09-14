@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import pandas as pd
 from .evaluation import evaluate
 from .pipeline import Pipeline
 from .ledger import load_pending
+from .retrainer import RetrainingDecision, adaptive_retrain
 
 FEEDBACK_KEY_COLUMNS = ["prediction_date", "symbol", "model_version"]
+
+
+@dataclass(frozen=True)
+class FeedbackCycleResult:
+    """Outcome of one idempotent settlement and retraining cycle."""
+
+    settled_rows: int
+    feedback_rows: int
+    retraining: RetrainingDecision | None
 
 
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
@@ -116,3 +127,47 @@ def retrain_candidate(raw: pd.DataFrame, validation_dates: int = 20, top_k: int 
         return pipe, {}
     labeled = label_predictions(pd.concat(predictions, ignore_index=True), raw)
     return pipe, score_labeled(labeled) if not labeled.empty else {}
+
+
+def run_feedback_cycle(
+    prediction_store: str,
+    feedback_store: str,
+    raw: pd.DataFrame,
+    market: pd.DataFrame,
+    model_dir: str = "artifacts",
+    as_of: str | None = None,
+    min_feedback_rows: int = 20,
+    min_train_days: int = 252,
+    step_days: int = 20,
+    top_k: int = 10,
+    rmse_tolerance: float = 0.0,
+    ranking_tolerance: float = 0.0,
+    prediction_date: str | None = None,
+) -> FeedbackCycleResult:
+    """Settle outcomes, then retrain only when accumulated feedback is sufficient.
+
+    Settlement is idempotent through the prediction ledger. Retraining remains
+    guarded by walk-forward, regime, ranking, feedback, and artifact-promotion
+    gates in ``adaptive_retrain``.
+    """
+    if min_feedback_rows <= 0:
+        raise ValueError("min_feedback_rows must be positive")
+    settled = settle_prediction_feedback(prediction_store, feedback_store, market, as_of=as_of)
+    feedback_path = Path(feedback_store)
+    if not feedback_path.exists():
+        return FeedbackCycleResult(len(settled), 0, None)
+    feedback = pd.read_csv(feedback_path)
+    if len(feedback) < min_feedback_rows:
+        return FeedbackCycleResult(len(settled), len(feedback), None)
+    decision = adaptive_retrain(
+        raw,
+        model_dir=model_dir,
+        min_train_days=min_train_days,
+        step_days=step_days,
+        top_k=top_k,
+        rmse_tolerance=rmse_tolerance,
+        ranking_tolerance=ranking_tolerance,
+        prediction_date=prediction_date or as_of,
+        feedback_store=feedback_store,
+    )
+    return FeedbackCycleResult(len(settled), len(feedback), decision)
