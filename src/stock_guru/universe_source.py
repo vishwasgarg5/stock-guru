@@ -22,6 +22,8 @@ def validate_source_manifest(manifest: dict) -> dict:
     for key in REQUIRED_MANIFEST:
         if not str(manifest[key]).strip():
             raise ValueError(f"Source manifest field {key} must not be blank")
+    if "source_sha256" in manifest and not str(manifest["source_sha256"]).strip():
+        raise ValueError("Source manifest source_sha256 must be nonblank when supplied")
     return manifest
 
 
@@ -67,7 +69,7 @@ def validate_historical_snapshots(snapshots: pd.DataFrame, *, expected_constitue
 
 
 def snapshot_gap_diagnostics(snapshots: pd.DataFrame, *, threshold_days: int | None = None) -> dict[str, object]:
-    """Report calendar gaps between supplied snapshot dates without inferring missing data."""
+    """Report calendar gaps between supplied snapshot dates without inferring missing history."""
     dates = pd.Series(pd.to_datetime(snapshots["as_of"], errors="coerce").dt.normalize().drop_duplicates().sort_values().tolist())
     if len(dates) < 2:
         return {"snapshot_gap_count": 0, "max_gap_days": 0, "gaps": [], "threshold_days": threshold_days}
@@ -90,5 +92,9 @@ def validate_source_bundle(snapshot_path: str | Path, manifest_path: str | Path,
     """Validate a snapshot plus provenance and return an audit summary."""
     manifest = load_source_manifest(manifest_path)
     snapshots = validate_historical_snapshot_file(snapshot_path, manifest_path, expected_constituents=expected_constituents, require_full_snapshot_size=require_full_snapshot_size)
+    actual_sha256 = file_sha256(snapshot_path)
+    expected_sha256 = manifest.get("source_sha256")
+    if expected_sha256 is not None and actual_sha256 != str(expected_sha256).strip():
+        raise ValueError("Universe source fingerprint does not match manifest")
     counts = snapshots.groupby("as_of")["symbol"].nunique()
-    return {"dataset": manifest["dataset"], "source_name": manifest["source_name"], "source_url": manifest["source_url"], "retrieved_at": manifest["retrieved_at"], "snapshot_dates": int(len(counts)), "earliest_date": str(snapshots["as_of"].min().date()), "latest_date": str(snapshots["as_of"].max().date()), "snapshot_rows": int(len(snapshots)), "unique_symbols": int(snapshots["symbol"].nunique()), "min_constituents": int(counts.min()), "max_constituents": int(counts.max()), "source_sha256": file_sha256(snapshot_path), "provenance_validated": True, "gap_diagnostics": snapshot_gap_diagnostics(snapshots, threshold_days=gap_threshold_days)}
+    return {"dataset": manifest["dataset"], "source_name": manifest["source_name"], "source_url": manifest["source_url"], "retrieved_at": manifest["retrieved_at"], "snapshot_dates": int(len(counts)), "earliest_date": str(snapshots["as_of"].min().date()), "latest_date": str(snapshots["as_of"].max().date()), "snapshot_rows": int(len(snapshots)), "unique_symbols": int(snapshots["symbol"].nunique()), "min_constituents": int(counts.min()), "max_constituents": int(counts.max()), "source_sha256": actual_sha256, "provenance_validated": True, "gap_diagnostics": snapshot_gap_diagnostics(snapshots, threshold_days=gap_threshold_days)}
