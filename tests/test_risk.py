@@ -73,7 +73,8 @@ def test_high_uncertainty_is_rejected():
 
 
 def test_low_forecast_confidence_is_rejected():
-    out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", forecast_confidence=0.40)]))
+    config = RiskConfig(min_forecast_confidence=0.50)
+    out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", forecast_confidence=0.40)]), config)
     assert out.iloc[0]["decision"] == "NO_TRADE"
     assert "forecast_confidence" in out.iloc[0]["risk_reason"]
 
@@ -83,7 +84,8 @@ def test_lower_forecast_confidence_reduces_position_weight():
         _base(symbol="HIGH", forecast_confidence=0.90),
         _base(symbol="LOW", forecast_confidence=0.60),
     ]
-    out = final_trade_decision(pd.DataFrame(rows), RiskConfig(max_total_exposure_pct=1.0))
+    config = RiskConfig(max_total_exposure_pct=1.0, max_position_pct=1.0)
+    out = final_trade_decision(pd.DataFrame(rows), config)
     high = out.loc[out["symbol"] == "HIGH", "position_weight"].iloc[0]
     low = out.loc[out["symbol"] == "LOW", "position_weight"].iloc[0]
     assert high > low
