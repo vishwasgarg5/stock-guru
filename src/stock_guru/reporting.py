@@ -11,7 +11,6 @@ def _aggregate_fold_regimes(folds) -> dict:
     for fold in folds:
         for regime, metrics in (getattr(fold, "regime_metrics", None) or {}).items():
             buckets.setdefault(str(regime), []).append(metrics)
-
     result = {}
     for regime, rows in buckets.items():
         sample_total = sum(int(row.get("samples", 0)) for row in rows)
@@ -29,7 +28,7 @@ def _aggregate_fold_regimes(folds) -> dict:
 
 
 def _forecast_confidence_metrics(predictions: pd.DataFrame) -> dict:
-    """Summarize the confidence/uncertainty distribution without treating confidence as probability."""
+    """Summarize confidence, uncertainty and empirical error by confidence bin."""
     if not isinstance(predictions, pd.DataFrame) or predictions.empty:
         return {}
     cols = {"forecast_confidence", "pred_close_uncertainty_pct"}
@@ -37,12 +36,24 @@ def _forecast_confidence_metrics(predictions: pd.DataFrame) -> dict:
         return {}
     result = {"samples": int(len(predictions))}
     if "forecast_confidence" in predictions:
-        values = pd.to_numeric(predictions["forecast_confidence"], errors="coerce").dropna()
-        if not values.empty:
-            result["mean"] = float(values.mean())
-            result["median"] = float(values.median())
-            result["p10"] = float(values.quantile(0.10))
-            result["p90"] = float(values.quantile(0.90))
+        values = pd.to_numeric(predictions["forecast_confidence"], errors="coerce")
+        valid = values.dropna()
+        if not valid.empty:
+            result["mean"] = float(valid.mean())
+            result["median"] = float(valid.median())
+            result["p10"] = float(valid.quantile(0.10))
+            result["p90"] = float(valid.quantile(0.90))
+            if {"actual_close", "pred_close", "base_close"}.issubset(predictions.columns):
+                frame = predictions.loc[valid.index, ["actual_close", "pred_close", "base_close"]].copy()
+                frame["confidence"] = valid
+                frame["abs_error_pct"] = (frame["actual_close"] - frame["pred_close"]).abs() / frame["base_close"].abs().replace(0, pd.NA)
+                frame["confidence_bin"] = pd.cut(frame["confidence"], bins=[-float("inf"), 0.5, 0.6, 0.7, 0.8, 0.9, float("inf")], right=False)
+                calibration = {}
+                for bucket, group in frame.groupby("confidence_bin", observed=True):
+                    if group.empty:
+                        continue
+                    calibration[str(bucket)] = {"samples": int(len(group)), "mean_confidence": float(group["confidence"].mean()), "mean_abs_error_pct": float(group["abs_error_pct"].mean())}
+                result["calibration_bins"] = calibration
     if "pred_close_uncertainty_pct" in predictions:
         values = pd.to_numeric(predictions["pred_close_uncertainty_pct"], errors="coerce").dropna()
         if not values.empty:
@@ -55,37 +66,19 @@ def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -
     """Persist portfolio metrics, cost sensitivity, fold metrics, and forecast diagnostics."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
-
     portfolio = result.get("portfolio", {})
     (out / "metrics.json").write_text(json.dumps(portfolio, indent=2, default=str), encoding="utf-8")
-
     cost_sensitivity = result.get("cost_sensitivity")
     if cost_sensitivity:
         (out / "cost_sensitivity.json").write_text(json.dumps(cost_sensitivity, indent=2, default=str), encoding="utf-8")
-
     folds = result.get("fold_results", [])
     regime_metrics = _aggregate_fold_regimes(folds)
     (out / "regime_metrics.json").write_text(json.dumps(regime_metrics, indent=2), encoding="utf-8")
-
     predictions = result.get("predictions")
     confidence_metrics = _forecast_confidence_metrics(predictions)
     (out / "forecast_confidence.json").write_text(json.dumps(confidence_metrics, indent=2), encoding="utf-8")
-
     if folds:
-        pd.DataFrame([{
-            "train_end": f.train_end,
-            "prediction_date": f.prediction_date,
-            **f.metrics,
-        } for f in folds]).to_csv(out / "fold_metrics.csv", index=False)
-
+        pd.DataFrame([{"train_end": f.train_end, "prediction_date": f.prediction_date, **f.metrics} for f in folds]).to_csv(out / "fold_metrics.csv", index=False)
     if isinstance(predictions, pd.DataFrame) and not predictions.empty:
         predictions.to_csv(out / "trades.csv", index=False)
-
-    return {
-        "metrics": str(out / "metrics.json"),
-        "cost_sensitivity": str(out / "cost_sensitivity.json") if cost_sensitivity else None,
-        "regime_metrics": str(out / "regime_metrics.json"),
-        "forecast_confidence": str(out / "forecast_confidence.json"),
-        "fold_metrics": str(out / "fold_metrics.csv"),
-        "trades": str(out / "trades.csv"),
-    }
+    return {"metrics": str(out / "metrics.json"), "cost_sensitivity": str(out / "cost_sensitivity.json") if cost_sensitivity else None, "regime_metrics": str(out / "regime_metrics.json"), "forecast_confidence": str(out / "forecast_confidence.json"), "fold_metrics": str(out / "fold_metrics.csv"), "trades": str(out / "trades.csv")}
