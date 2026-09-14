@@ -18,6 +18,25 @@ def load(path: str) -> pd.DataFrame:
     return df.sort_values(["date", "symbol"])
 
 
+def load_optional_csv(path: str | None) -> pd.DataFrame | None:
+    return pd.read_csv(path) if path else None
+
+
+def load_universe(path: str | None) -> pd.DataFrame | None:
+    if not path:
+        return None
+    df = pd.read_csv(path)
+    required = {"symbol", "start_date", "end_date"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing universe interval columns: {sorted(missing)}")
+    for col in ("start_date", "end_date"):
+        df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
+    if df[["start_date", "end_date"]].isna().any().any():
+        raise ValueError("Universe intervals contain invalid dates")
+    return df
+
+
 def save_model(pipe: Pipeline, model_dir: str, *, trained_through=None, validation_metrics=None, model_version=None) -> None:
     out = Path(model_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -37,11 +56,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stock Guru adaptive NIFTY 500 pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
     dl = sub.add_parser("download"); dl.add_argument("--start", required=True); dl.add_argument("--end"); dl.add_argument("--output", default="data/prices.csv")
-    tr = sub.add_parser("train"); tr.add_argument("--prices", required=True); tr.add_argument("--model-dir", default="artifacts")
-    pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
+    tr = sub.add_parser("train"); tr.add_argument("--prices", required=True); tr.add_argument("--fundamentals", default=None); tr.add_argument("--universe", default=None); tr.add_argument("--model-dir", default="artifacts")
+    pr = sub.add_parser("predict"); pr.add_argument("--prices", required=True); pr.add_argument("--fundamentals", default=None); pr.add_argument("--universe", default=None); pr.add_argument("--model-dir", default="artifacts"); pr.add_argument("--date", required=True); pr.add_argument("--top-k", type=int, default=10); pr.add_argument("--output", default="artifacts/predictions.csv")
     fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv"); fb.add_argument("--metrics-output", default="artifacts/feedback_metrics.json")
     rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10); rt.add_argument("--prediction-date", default=None); rt.add_argument("--feedback", default=None); rt.add_argument("--decision-output", default=None)
-    bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--fundamentals", default=None); bt.add_argument("--universe", default=None); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     uh = sub.add_parser("universe-history", help="Build PIT universe intervals from an authoritative baseline and event ledger")
     uh.add_argument("--baseline", required=True, help="CSV containing exactly one as_of date and symbol column")
@@ -64,12 +83,13 @@ def main() -> None:
         path = download_nifty500_prices(start=args.start, end=args.end, output=args.output)
         print(f"saved {path}")
     elif args.command == "train":
-        data = load(args.prices); pipe = Pipeline().train(data); save_model(pipe, args.model_dir, trained_through=data["date"].max()); print(f"trained; features={len(pipe.features)}")
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
+        pipe = Pipeline().train(data, fundamentals=fundamentals, universe_intervals=universe); save_model(pipe, args.model_dir, trained_through=data["date"].max()); print(f"trained; features={len(pipe.features)}")
     elif args.command == "predict":
         from .features import build_features
         from .ranker import StockRanker
         from .ohlc import OHLCForecaster
-        data = load(args.prices); feat_data, features = build_features(data)
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); prepared = Pipeline._prepare(data, universe); feat_data, features = build_features(prepared, fundamentals)
         ranker = StockRanker.load(str(Path(args.model_dir) / "ranker.joblib")); forecaster = OHLCForecaster.load(str(Path(args.model_dir) / "ohlc.joblib"))
         metadata_path = Path(args.model_dir) / "model_metadata.json"
         model_version = "unknown"
@@ -115,7 +135,8 @@ def main() -> None:
     elif args.command == "backtest":
         from .walk_forward_backtest import run_strategy_walk_forward
         from .reporting import save_backtest_report
-        result = run_strategy_walk_forward(load(args.prices), min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps)
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
+        result = run_strategy_walk_forward(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps, fundamentals=fundamentals, universe_intervals=universe)
         paths = save_backtest_report(result, args.output_dir); print(json.dumps({"portfolio": result["portfolio"], "files": paths}, indent=2, default=str))
     elif args.command == "evaluate": print(evaluate(pd.read_csv(args.predictions)))
     elif args.command == "universe-history":
@@ -132,12 +153,7 @@ def main() -> None:
         print(output.read_text(encoding="utf-8"))
     elif args.command == "universe-source-validate":
         from .universe_source import validate_source_bundle
-        report = validate_source_bundle(
-            args.snapshots,
-            args.manifest,
-            expected_constituents=args.expected_constituents,
-            require_full_snapshot_size=args.require_full_snapshot_size,
-        )
+        report = validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size)
         print(json.dumps(report, indent=2))
 
 
