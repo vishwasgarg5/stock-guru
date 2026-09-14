@@ -1,0 +1,7 @@
+{
+  "dataset": "nifty500_membership",
+  "source_name": "REPLACE_WITH_AUTHORITATIVE_SOURCE",
+  "source_url": "https://REPLACE_WITH_SOURCE_URL",
+  "retrieved_at": "REPLACE_WITH_ISO8601_TIMESTAMP",
+  "license_or_terms": "REPLACE_WITH_SOURCE_TERMS"
+}
