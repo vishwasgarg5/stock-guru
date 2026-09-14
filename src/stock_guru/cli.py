@@ -64,6 +64,16 @@ def main() -> None:
     fb = sub.add_parser("feedback"); fb.add_argument("--prices", required=True); fb.add_argument("--predictions", required=True); fb.add_argument("--output", default="artifacts/feedback.csv"); fb.add_argument("--metrics-output", default="artifacts/feedback_metrics.json")
     rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10); rt.add_argument("--prediction-date", default=None); rt.add_argument("--feedback", default=None); rt.add_argument("--decision-output", default=None)
     bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--fundamentals", default=None); bt.add_argument("--universe", default=None); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    s3 = sub.add_parser("step3", help="Run the conservative real-PIT Step 3 certification backtest")
+    s3.add_argument("--prices", required=True)
+    s3.add_argument("--fundamentals", required=True)
+    s3.add_argument("--universe", required=True)
+    s3.add_argument("--output", default="artifacts/step3_certification.json")
+    s3.add_argument("--min-train-days", type=int, default=252)
+    s3.add_argument("--step-days", type=int, default=20)
+    s3.add_argument("--top-k", type=int, default=10)
+    s3.add_argument("--transaction-cost-bps", type=float, default=10.0)
+    s3.add_argument("--slippage-bps", type=float, default=5.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     uh = sub.add_parser("universe-history", help="Build PIT universe intervals from an authoritative baseline and event ledger")
     uh.add_argument("--baseline", required=True); uh.add_argument("--events", required=True); uh.add_argument("--output", default="data/nifty500_universe_history.csv")
@@ -120,6 +130,20 @@ def main() -> None:
         from .walk_forward_backtest import run_strategy_walk_forward
         from .reporting import save_backtest_report
         data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); result = run_strategy_walk_forward(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps, fundamentals=fundamentals, universe_intervals=universe); print(json.dumps({"portfolio": result["portfolio"], "files": save_backtest_report(result, args.output_dir), "pit_context": result.get("pit_context", {})}, indent=2, default=str))
+    elif args.command == "step3":
+        from .step3_certification import run_step3_from_files
+        report = run_step3_from_files(
+            args.prices,
+            args.fundamentals,
+            args.universe,
+            output_path=args.output,
+            min_train_days=args.min_train_days,
+            step_days=args.step_days,
+            top_k=args.top_k,
+            transaction_cost_bps=args.transaction_cost_bps,
+            slippage_bps=args.slippage_bps,
+        )
+        print(json.dumps(report, indent=2, default=str))
     elif args.command == "evaluate": print(evaluate(pd.read_csv(args.predictions)))
     elif args.command == "event-audit":
         from .event_audit import audit_event_chain, save_event_audit
@@ -152,7 +176,7 @@ def main() -> None:
             smoke = run_production_smoke(model_dir=args.model_dir, event_manifest=args.event_manifest)
             report["smoke"] = smoke
             report["certification"] = "READY" if report["status"] == "ready" and smoke["status"] == "PASS" else "BLOCKED"
-        output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(report, indent=2), encoding="utf-8"); print(json.dumps(report, indent=2))
+        output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8"); print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__": main()
