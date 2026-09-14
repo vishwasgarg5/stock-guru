@@ -117,13 +117,11 @@ def main() -> None:
         path = build_universe_history_from_events(args.baseline, args.events, args.output)
         print(f"saved {path}")
     elif args.command == "universe-quality":
-        from .universe_coverage import build_coverage_report
+        from .universe_coverage import save_coverage_report
         snapshots = pd.read_csv(args.snapshots)
         events = pd.read_csv(args.events) if args.events else None
-        report = build_coverage_report(snapshots, events)
-        output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(json.dumps(report, indent=2))
+        output = save_coverage_report(snapshots, args.output, events)
+        print(output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__": main()
