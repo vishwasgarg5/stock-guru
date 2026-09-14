@@ -19,3 +19,14 @@ def test_strategy_walk_forward_rejects_short_history():
         assert "Not enough dates" in str(exc)
     else:
         raise AssertionError("Expected short-history validation")
+
+
+def test_strategy_walk_forward_reports_missing_pit_context(monkeypatch):
+    import stock_guru.walk_forward_backtest as module
+
+    monkeypatch.setattr(module, "run_walk_forward_with_predictions", lambda *args, **kwargs: ([], []))
+    raw = pd.DataFrame({"date": pd.to_datetime(["2025-01-01"]), "symbol": ["AAA"]})
+    result = run_strategy_walk_forward(raw)
+    assert result["pit_context"]["fundamentals_supplied"] is False
+    assert result["pit_context"]["universe_intervals_supplied"] is False
+    assert result["pit_context"]["research_warning"]
