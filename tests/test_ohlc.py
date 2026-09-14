@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator
 
 from stock_guru.ohlc import OHLCForecaster, TARGETS
 
@@ -62,8 +63,8 @@ def test_regime_adjustment_skips_small_regimes():
     assert "bear" not in forecaster.regime_adjustments
 
 
-class _ConstantModel:
-    def __init__(self, value):
+class _ConstantModel(BaseEstimator):
+    def __init__(self, value=0.0):
         self.value = value
 
     def predict(self, frame):
