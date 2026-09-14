@@ -10,6 +10,7 @@ class RiskConfig:
     max_position_pct: float = 0.15
     max_sector_pct: float = 0.30
     max_total_exposure_pct: float = 1.00
+    max_pairwise_correlation: float = 0.85
     target_risk_pct: float = 0.01
     min_confidence: float = 0.60
     min_forecast_confidence: float = 0.0
@@ -79,8 +80,43 @@ def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = No
     return out
 
 
-def size_positions(predictions: pd.DataFrame, config: RiskConfig | None = None) -> pd.DataFrame:
-    """Assign volatility-adjusted weights, then enforce regime, position and sector caps."""
+def _apply_correlation_cap(weights: pd.Series, predictions: pd.DataFrame, correlation_matrix: pd.DataFrame | None,
+                           max_pairwise_correlation: float) -> pd.Series:
+    if correlation_matrix is None or correlation_matrix.empty or len(weights) < 2:
+        return weights
+    matrix = correlation_matrix.copy()
+    matrix.index = matrix.index.astype(str)
+    matrix.columns = matrix.columns.astype(str)
+    symbols = predictions.loc[weights.index, "symbol"].astype(str)
+    scores = predictions.loc[weights.index].get("ai_score", pd.Series(0.0, index=weights.index)).fillna(0.0)
+    result = weights.copy()
+    ordered = list(result.sort_values(ascending=False).index)
+    kept: list[str] = []
+    for idx in ordered:
+        symbol = str(symbols.loc[idx])
+        too_correlated = False
+        for kept_idx in kept:
+            kept_symbol = str(symbols.loc[kept_idx])
+            if symbol in matrix.index and kept_symbol in matrix.columns:
+                corr = _safe_float(matrix.loc[symbol, kept_symbol], 0.0)
+                if corr >= max_pairwise_correlation:
+                    # Keep the stronger model signal; break ties by existing weight.
+                    if scores.loc[idx] <= scores.loc[kept_idx]:
+                        too_correlated = True
+                    else:
+                        result.loc[kept_idx] = 0.0
+                        kept.remove(kept_idx)
+                    break
+        if too_correlated:
+            result.loc[idx] = 0.0
+        else:
+            kept.append(idx)
+    return result
+
+
+def size_positions(predictions: pd.DataFrame, config: RiskConfig | None = None,
+                   correlation_matrix: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Assign volatility-adjusted weights, then enforce regime, position, sector and correlation caps."""
     cfg = config or RiskConfig()
     out = predictions.copy()
     out["position_weight"] = 0.0
@@ -109,14 +145,18 @@ def size_positions(predictions: pd.DataFrame, config: RiskConfig | None = None) 
             sector_cap = min(effective.loc[i].max_sector_pct for i in idx)
             if sector_total > sector_cap:
                 out.loc[idx, "position_weight"] *= sector_cap / sector_total
+    out.loc[eligible, "position_weight"] = _apply_correlation_cap(
+        out.loc[eligible, "position_weight"], out, correlation_matrix, cfg.max_pairwise_correlation
+    )
     out["position_weight_pct"] = out["position_weight"] * 100.0
     return out
 
 
-def final_trade_decision(predictions: pd.DataFrame, config: RiskConfig | None = None) -> pd.DataFrame:
+def final_trade_decision(predictions: pd.DataFrame, config: RiskConfig | None = None,
+                         correlation_matrix: pd.DataFrame | None = None) -> pd.DataFrame:
     cfg = config or RiskConfig()
     out = apply_risk_filters(predictions, cfg)
-    out = size_positions(out, cfg)
+    out = size_positions(out, cfg, correlation_matrix=correlation_matrix)
     out["trade"] = out["risk_pass"] & (out["position_weight"] > 0)
     out["decision"] = out["trade"].map({True: "TRADE", False: "NO_TRADE"})
     return out
