@@ -1,0 +1,5 @@
+evidence_type,source_name,source_url,coverage_start,coverage_end,authority,usable_for_certification,notes
+current_snapshot,NSE India,NSE Nifty 500 current constituent CSV,2026-03-30,2026-03-30,primary,yes,"Authoritative current snapshot; does not by itself establish historical membership."
+historical_reconstruction,aditya-jha/nse-historical-membership,https://github.com/aditya-jha/nse-historical-membership,2017-01-01,2026-05-15,secondary-derived,no,"Derived from public NSE/NSE Indices publications; useful for cross-checking and discovery, but not accepted as sole certification evidence."
+press_releases,NSE Indices Limited,https://www.niftyindices.com/Press_Release/,2019-02-25,2026-02-23,primary,partial,"Primary event evidence captured in repository source log; full membership snapshots are still required."
+data_subscription,NSE Indices Limited,https://www.niftyindices.com/offerings/data-subscription,,,primary,yes,"NSE states historical constituent data is available as a subscription product; acquisition is still required for certification."
