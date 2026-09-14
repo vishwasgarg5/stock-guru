@@ -42,7 +42,7 @@ def test_high_vol_bear_caps_total_exposure():
 
 
 def test_bear_regime_requires_higher_confidence_and_return():
-    rows = [_base(symbol="LOW", rank_confidence=0.69, pred_close=100.5, atr_pct_14=0.04, volatility_20=0.04, downside_volatility_20=0.025, market_regime="bear"), _base(symbol="HIGH", rank_confidence=0.70, pred_close=100.5, atr_pct_14=0.04, volatility_20=0.04, downside_volatility_20=0.025, market_regime="bear")]
+    rows = [_base(symbol="LOW", rank_confidence=0.69, pred_close=100.5, atr_pct_14=0.04, volatility_20=0.04, downside_volatility_20=0.025, market_regime="bear"), _base(symbol="HIGH", rank_confidence=0.70, pred_close=101.5, atr_pct_14=0.04, volatility_20=0.04, downside_volatility_20=0.025, market_regime="bear")]
     out = final_trade_decision(pd.DataFrame(rows))
     assert out.loc[out["symbol"] == "LOW", "decision"].iloc[0] == "NO_TRADE"
     assert out.loc[out["symbol"] == "HIGH", "decision"].iloc[0] == "TRADE"
@@ -80,10 +80,7 @@ def test_low_forecast_confidence_is_rejected():
 
 
 def test_lower_forecast_confidence_reduces_position_weight():
-    rows = [
-        _base(symbol="HIGH", forecast_confidence=0.90),
-        _base(symbol="LOW", forecast_confidence=0.60),
-    ]
+    rows = [_base(symbol="HIGH", forecast_confidence=0.90), _base(symbol="LOW", forecast_confidence=0.60)]
     config = RiskConfig(max_total_exposure_pct=1.0, max_position_pct=1.0)
     out = final_trade_decision(pd.DataFrame(rows), config)
     high = out.loc[out["symbol"] == "HIGH", "position_weight"].iloc[0]
