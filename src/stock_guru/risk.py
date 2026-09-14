@@ -14,6 +14,7 @@ class RiskConfig:
     min_confidence: float = 0.60
     max_atr_pct: float = 0.08
     max_volatility_20: float = 0.06
+    max_downside_volatility_20: float = 0.045
     min_expected_return: float = 0.002
     min_price: float = 20.0
 
@@ -36,6 +37,7 @@ def _regime_config(config: RiskConfig, regime: str) -> RiskConfig:
             min_confidence=0.70,
             max_atr_pct=0.06,
             max_volatility_20=0.045,
+            max_downside_volatility_20=0.032,
             min_expected_return=0.004,
         ),
         "high_volatility": dict(
@@ -45,6 +47,7 @@ def _regime_config(config: RiskConfig, regime: str) -> RiskConfig:
             min_confidence=0.65,
             max_atr_pct=0.07,
             max_volatility_20=0.05,
+            max_downside_volatility_20=0.038,
             min_expected_return=0.003,
         ),
         "bear": dict(
@@ -54,6 +57,7 @@ def _regime_config(config: RiskConfig, regime: str) -> RiskConfig:
             min_confidence=0.70,
             max_atr_pct=0.07,
             max_volatility_20=0.05,
+            max_downside_volatility_20=0.035,
             min_expected_return=0.004,
         ),
         "bull": dict(max_total_exposure_pct=1.00),
@@ -90,12 +94,22 @@ def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = No
         _safe_float(out.get("volatility_20", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_volatility_20
         for idx in out.index
     ]
+    checks["downside_volatility_ok"] = [
+        _safe_float(
+            out.get("downside_volatility_20", pd.Series(float("nan"), index=out.index)).loc[idx]
+        ) <= effective.loc[idx].max_downside_volatility_20
+        for idx in out.index
+    ]
     checks["return_ok"] = out["expected_return"] >= effective.map(lambda c: c.min_expected_return)
 
     # Missing risk inputs fail closed rather than silently bypassing protection.
-    for col in ["atr_pct_14", "volatility_20"]:
+    for col, check_name in [
+        ("atr_pct_14", "atr_ok"),
+        ("volatility_20", "volatility_ok"),
+        ("downside_volatility_20", "downside_volatility_ok"),
+    ]:
         if col not in out:
-            checks[col.replace("_14", "").replace("volatility_20", "volatility") + "_ok"] = False
+            checks[check_name] = False
 
     out["risk_pass"] = checks.all(axis=1)
     out["risk_reason"] = checks.apply(
@@ -125,7 +139,6 @@ def size_positions(predictions: pd.DataFrame, config: RiskConfig | None = None) 
     )
     raw = pd.Series([min(value, cap) for value, cap in zip(raw, per_position_cap)], index=raw.index)
 
-    # Enforce the strictest regime exposure cap represented by the eligible rows.
     total_cap = min(effective.loc[idx].max_total_exposure_pct for idx in raw.index)
     total = raw.sum()
     if total > total_cap:
