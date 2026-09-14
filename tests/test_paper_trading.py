@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from stock_guru.paper_trading import PaperConfig, execute_signals
 
@@ -32,3 +33,32 @@ def test_execute_signals_caps_position_weight():
     })
     out = execute_signals(signals, prices, 1_000_000, PaperConfig(max_position_pct=0.10))
     assert out.iloc[0]["allocated_capital"] == 100_000
+
+
+def test_execute_signals_shares_cash_budget_across_same_day_signals():
+    signals = pd.DataFrame({
+        "prediction_date": ["2026-01-01", "2026-01-01"],
+        "symbol": ["A", "B"],
+        "position_weight": [0.10, 0.10],
+    })
+    prices = pd.DataFrame({
+        "date": ["2026-01-02", "2026-01-02"],
+        "symbol": ["A", "B"],
+        "open": [100.0, 100.0],
+        "close": [100.0, 100.0],
+    })
+    out = execute_signals(signals, prices, 1_000.0, PaperConfig(commission_bps=0, slippage_bps=0))
+    assert out["allocated_capital"].sum() == 200.0
+    assert (out["cash_after"] == 1_000.0).all()
+    assert (out["equity_after"] == 1_000.0).all()
+
+
+def test_execute_signals_rejects_invalid_inputs():
+    signals = pd.DataFrame({
+        "prediction_date": ["2026-01-01"], "symbol": ["A"], "position_weight": [-0.1]
+    })
+    prices = pd.DataFrame({
+        "date": ["2026-01-02"], "symbol": ["A"], "open": [100.0], "close": [100.0]
+    })
+    with pytest.raises(ValueError, match="non-negative"):
+        execute_signals(signals, prices)
