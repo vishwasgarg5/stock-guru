@@ -8,7 +8,6 @@ from .walk_forward import run_walk_forward
 
 
 def _aggregate_regime_metrics(results) -> dict:
-    """Aggregate fold regime metrics using forecast-sample weighting."""
     buckets: dict[str, list[dict]] = {}
     for result in results:
         for regime, metrics in (getattr(result, "regime_metrics", None) or {}).items():
@@ -51,18 +50,19 @@ def evaluate_candidate(raw: pd.DataFrame, min_train_days: int = 252, step_days: 
 
 
 def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20, recent_rows: int = 20) -> dict | None:
-    """Summarize cumulative and recent realized live-model performance."""
     if feedback is None or feedback.empty:
         return None
     required = {"direction_correct", "return_error"}
     if not required.issubset(feedback.columns):
         return None
     data = feedback.copy()
-    data["prediction_date"] = pd.to_datetime(data["prediction_date"], errors="coerce") if "prediction_date" in data.columns else pd.NaT
+    if "prediction_date" in data.columns:
+        data["prediction_date"] = pd.to_datetime(data["prediction_date"], errors="coerce")
     data = data.dropna(subset=["direction_correct", "return_error"])
     if len(data) < min_rows:
         return None
-    data = data.sort_values("prediction_date") if "prediction_date" in data.columns else data
+    if "prediction_date" in data.columns:
+        data = data.sort_values("prediction_date")
     recent = data.tail(max(1, recent_rows))
     return {
         "feedback_rows": int(len(data)),
@@ -74,8 +74,8 @@ def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20, recent
     }
 
 
-def _metric(metrics: dict, key: str, default: float) -> float:
-    value = metrics.get(key, default)
+def _metric(metrics: dict | None, key: str, default: float) -> float:
+    value = (metrics or {}).get(key, default)
     try:
         value = float(value)
     except (TypeError, ValueError):
@@ -87,8 +87,7 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
                    ranking_tolerance: float = 0.0, feedback: dict | None = None,
                    min_validation_folds: int = 20, min_regime_samples: int = 10,
                    min_adverse_regime_direction: float = 0.45) -> bool:
-    """Promote only after robust OOS improvement and live/regime sanity checks."""
-    if "validation_folds" in new and _metric(new, "validation_folds", 0.0) < min_validation_folds:
+    if _metric(new, "validation_folds", 0.0) < min_validation_folds:
         return False
     regime_metrics = new.get("regime_metrics") or {}
     for regime in ("bear", "high_vol_bear"):
@@ -117,20 +116,35 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
 
 def select_champion(candidates: dict[str, dict], incumbent: str | None = None,
                     feedback: dict | None = None, **promotion_kwargs) -> dict:
-    """Choose a champion from candidate OOS summaries without silently promoting failures."""
+    """Select the best candidate that passes the same promotion gates as production."""
     if not candidates:
         raise ValueError("No candidate metrics supplied")
+
     incumbent_metrics = candidates.get(incumbent) if incumbent else None
     eligible = {
         name: metrics for name, metrics in candidates.items()
         if should_promote(incumbent_metrics, metrics, feedback=feedback, **promotion_kwargs)
     }
-    if incumbent and incumbent in candidates and incumbent not in eligible:
-        return {"champion": incumbent, "promoted": False, "reason": "no_candidate_passed_promotion_gate"}
+
+    if incumbent and incumbent in candidates:
+        incumbent_passes = incumbent in eligible
+        if not eligible or not incumbent_passes:
+            return {"champion": incumbent, "promoted": False,
+                    "reason": "no_candidate_passed_promotion_gate"}
+
     if not eligible:
-        return {"champion": None, "promoted": False, "reason": "no_candidate_passed_promotion_gate"}
-    winner = min(eligible, key=lambda name: (_metric(eligible[name], "pred_close_rmse", float("inf")), -_metric(eligible[name], "close_direction_accuracy", 0.0)))
-    return {"champion": winner, "promoted": winner != incumbent, "reason": "candidate_passed_promotion_gate"}
+        return {"champion": None, "promoted": False,
+                "reason": "no_candidate_passed_promotion_gate"}
+
+    winner = min(
+        eligible,
+        key=lambda name: (
+            _metric(eligible[name], "pred_close_rmse", float("inf")),
+            -_metric(eligible[name], "close_direction_accuracy", 0.0),
+        ),
+    )
+    return {"champion": winner, "promoted": winner != incumbent,
+            "reason": "candidate_passed_promotion_gate"}
 
 
 def save_metrics(model_dir: str | Path, metrics: dict) -> None:
