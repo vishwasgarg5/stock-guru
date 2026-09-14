@@ -17,20 +17,16 @@ class FoldResult:
     regime_metrics: dict | None = None
 
 
-def run_walk_forward_with_predictions(
-    raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10,
-) -> tuple[list[FoldResult], list[pd.DataFrame]]:
+def run_walk_forward_with_predictions(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> tuple[list[FoldResult], list[pd.DataFrame]]:
     """Run leakage-safe folds once and return metrics plus labeled predictions."""
     dates = sorted(pd.to_datetime(raw["date"]).dt.normalize().unique())
     if len(dates) <= min_train_days + 1:
         raise ValueError("Not enough dates for walk-forward validation")
-
     results: list[FoldResult] = []
     predictions: list[pd.DataFrame] = []
     full_features, _ = build_features(raw)
     normalized = pd.to_datetime(full_features["date"]).dt.normalize()
     raw_dates = pd.to_datetime(raw["date"]).dt.normalize()
-
     actuals = raw[["date", "symbol", "close"]].copy()
     actuals["date"] = pd.to_datetime(actuals["date"]).dt.normalize()
     actuals = actuals.sort_values(["symbol", "date"])
@@ -38,8 +34,6 @@ def run_walk_forward_with_predictions(
     actuals["next_date"] = actuals.groupby("symbol")["date"].shift(-1)
     session_next = pd.Series(dates[1:], index=pd.Index(dates[:-1]))
     actuals["expected_next_date"] = actuals["date"].map(session_next)
-    # A symbol only receives a next-session label when its next observation is
-    # the same global trading session used by the walk-forward fold.
     actuals.loc[actuals["next_date"] != actuals["expected_next_date"], "next_close"] = pd.NA
     actuals["base_close"] = actuals["close"]
 
@@ -48,11 +42,9 @@ def run_walk_forward_with_predictions(
         prediction_date = dates[idx]
         train = raw[raw_dates <= train_end].copy()
         pipe = Pipeline(top_k=top_k).train(train)
-
         day = full_features[normalized == prediction_date].copy().dropna(subset=pipe.features)
         if day.empty:
             continue
-
         scored = pipe.ranker.score(day)
         market_regime = regime_label(day.iloc[0])
         ranking_base = scored[["date", "symbol", "rank_score"]].copy()
@@ -60,30 +52,25 @@ def run_walk_forward_with_predictions(
         ranking_base["market_regime"] = market_regime
         ranking_base = ranking_base.merge(actuals[["date", "symbol", "base_close", "next_close"]], on=["date", "symbol"], how="left").dropna(subset=["base_close", "next_close"])
         ranking_base["actual_close"] = ranking_base["next_close"]
-
         ranked = scored.head(top_k).copy()
         pred = pipe.forecaster.predict(ranked)
         if pred.empty:
             continue
-
         pred["rank"] = range(1, len(pred) + 1)
         pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
         pred["market_regime"] = market_regime
-        risk_columns = ["atr_pct_14", "volatility_20", "downside_volatility_20"]
+        risk_columns = ["atr_pct_14", "volatility_20", "downside_volatility_20", "volume_ratio_20"]
         risk_frame = ranked[["symbol", *risk_columns]].copy()
         pred = pred.merge(risk_frame, on="symbol", how="left", validate="one_to_one")
-
         labeled = label_predictions(pred, raw)
         labeled = labeled[labeled["prediction_date"] == prediction_date].copy()
         if labeled.empty:
             continue
-
         metrics = score_labeled(labeled)
         metrics.update(ranking_metrics(ranking_base, k=top_k))
         regime_metrics = metrics.pop("regime_metrics", None)
         results.append(FoldResult(str(train_end.date()), str(prediction_date.date()), metrics, regime_metrics))
         predictions.append(labeled)
-
     return results, predictions
 
 
