@@ -4,7 +4,7 @@ from stock_guru.risk import RiskConfig, final_trade_decision
 
 
 def _base(**extra):
-    data = {"close": 100.0, "pred_close": 105.0, "rank_confidence": 0.9, "atr_pct_14": 0.02, "volatility_20": 0.03, "downside_volatility_20": 0.02, "volume_ratio_20": 1.0}
+    data = {"close": 100.0, "pred_close": 105.0, "rank_confidence": 0.9, "forecast_confidence": 0.9, "pred_close_uncertainty_pct": 0.02, "atr_pct_14": 0.02, "volatility_20": 0.03, "downside_volatility_20": 0.02, "volume_ratio_20": 1.0}
     data.update(extra)
     return data
 
@@ -64,3 +64,15 @@ def test_thin_volume_is_rejected():
     out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", volume_ratio_20=0.40)]))
     assert out.iloc[0]["decision"] == "NO_TRADE"
     assert "liquidity" in out.iloc[0]["risk_reason"]
+
+
+def test_high_uncertainty_is_rejected():
+    out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", pred_close_uncertainty_pct=0.10)]))
+    assert out.iloc[0]["decision"] == "NO_TRADE"
+    assert "uncertainty" in out.iloc[0]["risk_reason"]
+
+
+def test_low_forecast_confidence_is_rejected():
+    out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", forecast_confidence=0.40)]))
+    assert out.iloc[0]["decision"] == "NO_TRADE"
+    assert "forecast_confidence" in out.iloc[0]["risk_reason"]
