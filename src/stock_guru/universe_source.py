@@ -67,6 +67,19 @@ def validate_historical_snapshots(
     return clean.sort_values(["as_of", "symbol"]).reset_index(drop=True)
 
 
+def snapshot_gap_diagnostics(snapshots: pd.DataFrame, *, threshold_days: int | None = None) -> dict[str, object]:
+    """Report calendar gaps between supplied snapshot dates without inferring missing data."""
+    dates = pd.Series(pd.to_datetime(snapshots["as_of"], errors="coerce").dt.normalize().drop_duplicates().sort_values().tolist())
+    if len(dates) < 2:
+        return {"snapshot_gap_count": 0, "max_gap_days": 0, "gaps": [], "threshold_days": threshold_days}
+    gaps = dates.diff().dt.days.iloc[1:]
+    records = []
+    for idx, gap in gaps.items():
+        if threshold_days is None or int(gap) > threshold_days:
+            records.append({"from": str(dates.iloc[idx - 1].date()), "to": str(dates.iloc[idx].date()), "gap_days": int(gap)})
+    return {"snapshot_gap_count": len(records), "max_gap_days": int(gaps.max()), "gaps": records, "threshold_days": threshold_days}
+
+
 def validate_historical_snapshot_file(
     snapshot_path: str | Path,
     manifest_path: str | Path,
@@ -90,8 +103,9 @@ def validate_source_bundle(
     *,
     expected_constituents: int | None = None,
     require_full_snapshot_size: bool = False,
+    gap_threshold_days: int | None = None,
 ) -> dict[str, object]:
-    """Validate a snapshot plus its provenance and return an audit summary."""
+    """Validate a snapshot plus provenance and return an audit summary."""
     manifest = load_source_manifest(manifest_path)
     snapshots = validate_historical_snapshot_file(
         snapshot_path,
@@ -113,4 +127,5 @@ def validate_source_bundle(
         "min_constituents": int(counts.min()),
         "max_constituents": int(counts.max()),
         "provenance_validated": True,
+        "gap_diagnostics": snapshot_gap_diagnostics(snapshots, threshold_days=gap_threshold_days),
     }
