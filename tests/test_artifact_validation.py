@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from stock_guru.artifact_validation import validate_model_artifact
+from stock_guru.artifact_validation import validate_artifact_manifest, validate_model_artifact
 
 
 def make_artifact(tmp_path: Path, pit=True):
@@ -33,3 +33,15 @@ def test_artifact_validation_rejects_non_pit_artifact(tmp_path):
     make_artifact(tmp_path, pit=False)
     with pytest.raises(ValueError, match="PIT production"):
         validate_model_artifact(tmp_path, require_pit_context=True)
+
+
+def test_artifact_manifest_requires_all_fields():
+    with pytest.raises(ValueError, match="missing fields"):
+        validate_artifact_manifest({})
+
+
+def test_artifact_manifest_requires_sha256_length():
+    manifest = {"model_version": "v1", "trained_through": "2026-09-14"}
+    manifest.update({"ranker_sha256": "0", "ohlc_sha256": "0", "features_sha256": "0", "metadata_sha256": "0"})
+    with pytest.raises(ValueError, match="64-character"):
+        validate_artifact_manifest(manifest)
