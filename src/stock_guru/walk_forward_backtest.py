@@ -25,6 +25,11 @@ def run_strategy_walk_forward(
         fundamentals=fundamentals,
         universe_intervals=universe_intervals,
     )
+    pit_context = {
+        "fundamentals_supplied": fundamentals is not None,
+        "universe_intervals_supplied": universe_intervals is not None,
+        "research_warning": None if (fundamentals is not None and universe_intervals is not None) else "Backtest does not include all PIT datasets; historical performance may retain survivorship or information-timing bias.",
+    }
 
     all_predictions = [final_trade_decision(pred.copy()) for pred in fold_predictions]
     all_predictions = [pred for pred in all_predictions if not pred.empty]
@@ -35,6 +40,7 @@ def run_strategy_walk_forward(
             "prediction_rows": 0,
             "portfolio": {"days": 0},
             "fold_results": fold_results,
+            "pit_context": pit_context,
         }
 
     predictions = pd.concat(all_predictions, ignore_index=True)
@@ -47,4 +53,5 @@ def run_strategy_walk_forward(
         "cost_sensitivity": sensitivity,
         "fold_results": fold_results,
         "predictions": predictions,
+        "pit_context": pit_context,
     }
