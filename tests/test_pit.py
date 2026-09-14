@@ -19,7 +19,9 @@ def test_join_uses_latest_fundamental_available_on_or_before_price_date():
 
     out = join_pit_fundamentals(prices, fundamentals)
 
-    assert out["roe"].tolist() == [None, 10.0, 20.0]
+    assert pd.isna(out.loc[out["date"] == "2024-01-10", "roe"]).all()
+    assert out.loc[out["date"] == "2024-02-10", "roe"].iloc[0] == 10.0
+    assert out.loc[out["date"] == "2024-03-10", "roe"].iloc[0] == 20.0
     assert out["_pit_available_date"].dt.strftime("%Y-%m-%d").tolist() == [None, "2024-01-20", "2024-02-20"]
 
 
