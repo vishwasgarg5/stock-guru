@@ -23,7 +23,10 @@ class Pipeline:
     ) -> pd.DataFrame:
         if universe_intervals is None:
             return raw.copy()
-        return apply_point_in_time_universe(raw, universe_intervals)
+        prepared = apply_point_in_time_universe(raw, universe_intervals)
+        if prepared.empty:
+            raise ValueError("PIT universe filtering produced no eligible market rows")
+        return prepared
 
     def train(
         self,
@@ -33,6 +36,8 @@ class Pipeline:
     ) -> "Pipeline":
         prepared = self._prepare(raw, universe_intervals)
         data, features = build_features(prepared, fundamentals)
+        if data.empty:
+            raise ValueError("No feature rows available for pipeline training")
         self.features = features
         self.ranker = StockRanker().fit(data, features)
         self.forecaster = OHLCForecaster().fit(data, features)
@@ -50,8 +55,14 @@ class Pipeline:
         prepared = self._prepare(raw, universe_intervals)
         data, _ = build_features(prepared, fundamentals)
         day = data[data["date"].astype(str) == str(date)].copy().dropna(subset=self.features)
+        if day.empty:
+            raise ValueError(f"No eligible feature rows available for prediction date {date}")
         ranked = self.ranker.score(day).head(self.top_k)
+        if ranked.empty:
+            raise ValueError(f"No eligible ranked rows available for prediction date {date}")
         pred = self.forecaster.predict(ranked)
+        if pred.empty:
+            raise ValueError(f"No OHLC predictions available for prediction date {date}")
         pred["rank"] = range(1, len(pred) + 1)
         pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
         pred["market_regime"] = regime_label(day.iloc[0]) if not day.empty else "unknown"
