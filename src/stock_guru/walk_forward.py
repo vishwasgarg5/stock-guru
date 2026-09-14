@@ -17,14 +17,23 @@ class FoldResult:
     regime_metrics: dict | None = None
 
 
-def run_walk_forward_with_predictions(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> tuple[list[FoldResult], list[pd.DataFrame]]:
-    """Run leakage-safe folds once and return metrics plus labeled predictions."""
+def run_walk_forward_with_predictions(
+    raw: pd.DataFrame,
+    min_train_days: int = 252,
+    step_days: int = 20,
+    top_k: int = 10,
+    fundamentals: pd.DataFrame | None = None,
+    universe_intervals: pd.DataFrame | None = None,
+) -> tuple[list[FoldResult], list[pd.DataFrame]]:
+    """Run expanding, leakage-safe folds with optional PIT inputs."""
     dates = sorted(pd.to_datetime(raw["date"]).dt.normalize().unique())
     if len(dates) <= min_train_days + 1:
         raise ValueError("Not enough dates for walk-forward validation")
     results: list[FoldResult] = []
     predictions: list[pd.DataFrame] = []
-    full_features, _ = build_features(raw)
+
+    prepared_raw = Pipeline._prepare(raw, universe_intervals)
+    full_features, _ = build_features(prepared_raw, fundamentals)
     normalized = pd.to_datetime(full_features["date"]).dt.normalize()
     raw_dates = pd.to_datetime(raw["date"]).dt.normalize()
     actuals = raw[["date", "symbol", "close"]].copy()
@@ -41,7 +50,7 @@ def run_walk_forward_with_predictions(raw: pd.DataFrame, min_train_days: int = 2
         train_end = dates[idx - 1]
         prediction_date = dates[idx]
         train = raw[raw_dates <= train_end].copy()
-        pipe = Pipeline(top_k=top_k).train(train)
+        pipe = Pipeline(top_k=top_k).train(train, fundamentals=fundamentals, universe_intervals=universe_intervals)
         day = full_features[normalized == prediction_date].copy().dropna(subset=pipe.features)
         if day.empty:
             continue
@@ -62,7 +71,7 @@ def run_walk_forward_with_predictions(raw: pd.DataFrame, min_train_days: int = 2
         risk_columns = ["atr_pct_14", "volatility_20", "downside_volatility_20", "volume_ratio_20"]
         risk_frame = ranked[["symbol", *risk_columns]].copy()
         pred = pred.merge(risk_frame, on="symbol", how="left", validate="one_to_one")
-        labeled = label_predictions(pred, raw)
+        labeled = label_predictions(pred, prepared_raw)
         labeled = labeled[labeled["prediction_date"] == prediction_date].copy()
         if labeled.empty:
             continue
@@ -74,7 +83,21 @@ def run_walk_forward_with_predictions(raw: pd.DataFrame, min_train_days: int = 2
     return results, predictions
 
 
-def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> list[FoldResult]:
-    """Evaluate next-session forecasts with expanding, leakage-safe training windows."""
-    results, _ = run_walk_forward_with_predictions(raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k)
+def run_walk_forward(
+    raw: pd.DataFrame,
+    min_train_days: int = 252,
+    step_days: int = 20,
+    top_k: int = 10,
+    fundamentals: pd.DataFrame | None = None,
+    universe_intervals: pd.DataFrame | None = None,
+) -> list[FoldResult]:
+    """Evaluate next-session forecasts with expanding, leakage-safe PIT windows."""
+    results, _ = run_walk_forward_with_predictions(
+        raw,
+        min_train_days=min_train_days,
+        step_days=step_days,
+        top_k=top_k,
+        fundamentals=fundamentals,
+        universe_intervals=universe_intervals,
+    )
     return results
