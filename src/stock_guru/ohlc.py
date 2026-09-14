@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import joblib
-import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.model_selection import TimeSeriesSplit
@@ -29,24 +28,33 @@ class OHLCForecaster:
         self.regime_blend = {"bear": 0.25, "high_vol_bear": 0.25}
 
     def _fit_regime_adjustments(self, train: pd.DataFrame) -> None:
-        """Learn conservative regime corrections from time-series OOF residuals."""
+        """Learn conservative regime corrections from date-grouped OOF residuals."""
+        train = train.copy()
+        if "date" in train:
+            train["date"] = pd.to_datetime(train["date"]).dt.normalize()
+            train = train.sort_values(["date", "symbol"] if "symbol" in train else ["date"])
         labels = train.apply(regime_label, axis=1)
-        train = train.copy().sort_values("date") if "date" in train else train.copy()
         residuals = pd.DataFrame(index=train.index, columns=TARGETS, dtype=float)
-        n_splits = min(3, max(0, len(train) // 20))
+
+        unique_dates = pd.Index(train["date"].drop_duplicates()) if "date" in train else pd.Index([])
+        n_splits = min(3, max(0, len(unique_dates) // 20))
         if n_splits >= 2:
             splitter = TimeSeriesSplit(n_splits=n_splits)
-            for fit_idx, valid_idx in splitter.split(train):
-                fit = train.iloc[fit_idx]
-                valid = train.iloc[valid_idx]
+            for fit_date_idx, valid_date_idx in splitter.split(unique_dates):
+                fit_dates = unique_dates[fit_date_idx]
+                valid_dates = unique_dates[valid_date_idx]
+                fit = train[train["date"].isin(fit_dates)]
+                valid = train[train["date"].isin(valid_dates)]
                 for target, model in self.models.items():
                     oof_model = clone(model)
                     oof_model.fit(fit[self.features], fit[target])
-                    residuals.loc[valid.index, target] = valid[target].to_numpy() - oof_model.predict(valid[self.features])
+                    residuals.loc[valid.index, target] = (
+                        valid[target].to_numpy() - oof_model.predict(valid[self.features])
+                    )
 
         adjustments: dict[str, dict[str, float]] = {}
         for label in ("bear", "high_vol_bear"):
-            mask = labels.reindex(train.index).eq(label) & residuals.notna().all(axis=1)
+            mask = labels.eq(label) & residuals.notna().all(axis=1)
             if mask.sum() < 10:
                 continue
             adjustments[label] = {
