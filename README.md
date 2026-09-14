@@ -22,13 +22,15 @@ The repository contains the model baseline plus guarded infrastructure for point
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
-- **Steps 29–38 — PIT/data-quality hardening:** a reusable point-in-time fundamentals as-of join is available; feature construction and the model pipeline can consume PIT fundamentals and optional PIT universe intervals; fundamental values are validated for numeric/finite content; market feature inputs reject malformed or duplicate symbol/date observations; OHLC training/prediction fails closed on empty usable data; regression tests cover the new guards. These steps improve research safety but do not claim that the underlying historical constituent or filing data are complete.
+- **Steps 29–38 — PIT/data-quality hardening:** a reusable point-in-time fundamentals as-of join is available; feature construction and the model pipeline can consume PIT fundamentals and optional PIT universe intervals; fundamental values are validated for numeric/finite content; market feature inputs reject malformed or duplicate symbol/date observations; OHLC training/prediction fails closed on empty usable data; regression tests cover the new guards.
+- **Steps 39–42 — PIT universe ingestion hardening:** normalized snapshot/event validators, CSV ingestion helpers, provenance-aware templates, and regression tests are now in place. These changes prepare the repository for importing real historical NIFTY 500 evidence without fabricating missing history.
 
 ## Design
 
 - `src/stock_guru/data.py`: current NIFTY 500 universe + OHLCV ingestion.
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
+- `src/stock_guru/universe_ingest.py`: normalization and validation for PIT universe snapshots/events.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
@@ -56,6 +58,8 @@ The modeling input must contain at least:
 Never use a fundamental value before its public availability date. The strict PIT join in `stock_guru.pit` uses `available_date` as the eligibility boundary and never substitutes a period-end or report date for availability.
 
 Market data must have at most one row per `date`/`symbol`; malformed dates, blank symbols, or missing OHLCV columns are rejected during feature construction.
+
+PIT universe snapshots must contain `as_of` and `symbol`. Event imports must additionally contain `effective_date`, `action`, `source`, and `source_id`. Symbols and actions are normalized, dates are normalized, duplicates are rejected, and event actions are limited to `include`/`exclude`.
 
 ## Install
 
