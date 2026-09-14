@@ -19,6 +19,12 @@ class FeedbackCycleResult:
     retraining: RetrainingDecision | None
 
 
+def adaptive_retrain(*args, **kwargs):
+    """Lazily delegate retraining without creating an import cycle."""
+    from .retrainer import adaptive_retrain as _adaptive_retrain
+    return _adaptive_retrain(*args, **kwargs)
+
+
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
     """Join each prediction to the next available session for its symbol."""
     p = predictions.copy()
@@ -158,7 +164,6 @@ def run_feedback_cycle(
     feedback = pd.read_csv(feedback_path)
     if len(feedback) < min_feedback_rows:
         return FeedbackCycleResult(len(settled), len(feedback), None)
-    from .retrainer import adaptive_retrain
     decision = adaptive_retrain(
         raw,
         model_dir=model_dir,
