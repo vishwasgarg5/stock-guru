@@ -1,0 +1,19 @@
+period,effective_date,evidence_type,status,source_id,notes
+2019-03,2019-03-29,event_ledger,verified,ind_prs25022019,25 exclusions and 25 inclusions
+2019-09,2019-09-27,event_ledger,verified,ind_prs28082019+ind_prs17092019,periodic review plus same-date scheme event
+2020-03,2020-03-19,event_ledger,verified,ind_prs19032020,exceptional event
+2020-06,2020-06-26,event_ledger,verified,ind_prs10062020,25 exclusions and 25 inclusions
+2021-09,2021-09-30,source_only,located,,full constituent extraction pending
+2022-03,2022-03-31,event_ledger,verified,ind_prs24022022_1,32 exclusions and 32 inclusions
+2022-04,2022-04-07,event_ledger,verified,ind_prs06042022,SUPPETRO to MTARTECH
+2022-09,2022-09-30,event_ledger,verified,ind_prs01092022+ind_prs16092022,18+18 periodic events plus EQUITAS to SHOPERSTOP
+2023-03,2023-03-31,event_ledger,verified,ind_prs17022023_1,full event table extracted
+2023-09,2023-09-29,source_only,located,,full constituent extraction pending
+2023-10,2023-10-26,event_ledger,verified,ind_prs17102023,KIRLFER to CONCORDBIO
+2024-03,2024-03-28,event_ledger,verified,ind_prs28022024,34 exclusions and 34 inclusions
+2024-09,2024-09-30,event_ledger_plus_correction,verified,ind_prs23082024+ind_prs25092024,correction handled separately; final canonical merge pending
+2025-03,2025-03-28,event_ledger,verified,ind_prs21022025,30 exclusions and 30 inclusions
+2025-09,2025-09-23,event_ledger,verified,ind_prs15092025_1,PEL to RELINFRA
+2025-09,2025-09-30,event_ledger,verified,ind_prs22082025,18 exclusions and 18 inclusions
+2025-12,2025-12-31,event_ledger,verified,ind_prs11122025,SKFINDIA to JSWCEMENT
+2026-03,2026-03-30,event_ledger,verified,ind_prs23022026,31 exclusions and 31 inclusions
