@@ -15,8 +15,9 @@ def build_readiness_report(*, model_exists: bool, pit_universe_validated: bool,
         fundamentals_validated=fundamentals_validated,
         monitoring_configured=monitoring_configured,
         tests_green=tests_green,
+        historical_data_available=historical_data_available,
     )
     gates["historical_data_available"] = bool(historical_data_available)
-    gates["status"] = "ready" if gates["status"] == "ready" and historical_data_available else "blocked"
+    gates["status"] = "ready" if gates["status"] == "ready" else "blocked"
     gates["historical_performance_claims_allowed"] = bool(historical_data_available and pit_universe_validated and fundamentals_validated)
     return gates
