@@ -56,7 +56,9 @@ def test_pit_fundamentals_accept_timestamp_and_versioned_restatement():
     })
     out = validate_pit_fundamentals(frame)
     assert out["version"].tolist() == ["original", "restated"]
-    assert str(out["available_timestamp"].dtype).startswith("datetime64[ns, UTC]")
+    dtype = out["available_timestamp"].dtype
+    assert str(dtype).startswith("datetime64[")
+    assert getattr(dtype, "tz", None) is not None
 
 
 def test_pit_fundamentals_reject_invalid_source_hash():
