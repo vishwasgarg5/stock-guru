@@ -6,7 +6,6 @@ import pandas as pd
 from .evaluation import evaluate
 from .pipeline import Pipeline
 from .ledger import load_pending
-from .retrainer import RetrainingDecision, adaptive_retrain
 
 FEEDBACK_KEY_COLUMNS = ["prediction_date", "symbol", "model_version"]
 
@@ -159,6 +158,7 @@ def run_feedback_cycle(
     feedback = pd.read_csv(feedback_path)
     if len(feedback) < min_feedback_rows:
         return FeedbackCycleResult(len(settled), len(feedback), None)
+    from .retrainer import adaptive_retrain
     decision = adaptive_retrain(
         raw,
         model_dir=model_dir,
