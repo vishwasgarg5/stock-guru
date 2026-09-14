@@ -47,6 +47,10 @@ def main() -> None:
     uh.add_argument("--baseline", required=True, help="CSV containing exactly one as_of date and symbol column")
     uh.add_argument("--events", required=True, help="Provenance-bearing inclusion/exclusion event CSV")
     uh.add_argument("--output", default="data/nifty500_universe_history.csv")
+    uq = sub.add_parser("universe-quality", help="Report PIT universe coverage without assuming historical completeness")
+    uq.add_argument("--snapshots", required=True, help="CSV containing as_of and symbol columns")
+    uq.add_argument("--events", default=None, help="Optional provenance-bearing event CSV")
+    uq.add_argument("--output", default="artifacts/universe_quality.json")
     args = parser.parse_args()
 
     if args.command == "download":
@@ -112,6 +116,14 @@ def main() -> None:
         from .universe_events import build_universe_history_from_events
         path = build_universe_history_from_events(args.baseline, args.events, args.output)
         print(f"saved {path}")
+    elif args.command == "universe-quality":
+        from .universe_coverage import build_coverage_report
+        snapshots = pd.read_csv(args.snapshots)
+        events = pd.read_csv(args.events) if args.events else None
+        report = build_coverage_report(snapshots, events)
+        output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__": main()
