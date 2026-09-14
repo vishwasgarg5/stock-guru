@@ -93,7 +93,16 @@ def settle_prediction_feedback(prediction_store: str, feedback_store: str, marke
 
 
 def retrain_candidate(raw: pd.DataFrame, validation_dates: int = 20, top_k: int = 10) -> tuple[Pipeline, dict]:
-    """Train on the pre-holdout period and evaluate predictions on untouched dates."""
+    """Train on the pre-holdout period and evaluate on untouched dates.
+
+    This function deliberately returns a candidate and metrics only; promotion is
+    left to the existing champion/challenger gate so retraining cannot silently
+    replace the production model.
+    """
+    if validation_dates <= 0:
+        raise ValueError("validation_dates must be positive")
+    if top_k <= 0:
+        raise ValueError("top_k must be positive")
     dates = sorted(pd.to_datetime(raw["date"]).dt.normalize().unique())
     if len(dates) <= validation_dates + 252:
         raise ValueError("Need more history before adaptive retraining")
