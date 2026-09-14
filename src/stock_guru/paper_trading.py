@@ -13,65 +13,54 @@ class PaperConfig:
     slippage_bps: float = 5.0
 
 
-def _load(path: str | Path, required: set[str]) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"Missing columns: {sorted(missing)}")
-    return df
-
-
 def execute_signals(signals: pd.DataFrame, prices: pd.DataFrame, capital: float,
                     config: PaperConfig | None = None) -> pd.DataFrame:
-    """Simulate next-session entries using predicted signals and actual opens.
-
-    Signals must contain prediction_date, symbol, and a positive position_weight.
-    Prices must contain date, symbol and open. Allocation is capped per position.
-    """
+    """Execute accepted signals at the next session open and close them that day."""
     cfg = config or PaperConfig()
-    required = {"prediction_date", "symbol", "position_weight"}
+    required = {"prediction_date", "symbol"}
     missing = required - set(signals.columns)
     if missing:
         raise ValueError(f"Missing signal columns: {sorted(missing)}")
+    weight_col = "position_weight" if "position_weight" in signals.columns else "allocation_pct"
+    if weight_col not in signals.columns:
+        raise ValueError("Signals must contain position_weight or allocation_pct")
     p = prices.copy()
+    missing = {"date", "symbol", "open", "close"} - set(p.columns)
+    if missing:
+        raise ValueError(f"Missing price columns: {sorted(missing)}")
     p["date"] = pd.to_datetime(p["date"]).dt.normalize()
+    p["symbol"] = p["symbol"].astype(str).str.strip()
     s = signals.copy()
     s["prediction_date"] = pd.to_datetime(s["prediction_date"]).dt.normalize()
     s["symbol"] = s["symbol"].astype(str).str.strip()
-    p["symbol"] = p["symbol"].astype(str).str.strip()
-    next_prices = p[["date", "symbol", "open"]].sort_values(["symbol", "date"])
-    s = s.sort_values(["symbol", "prediction_date"])
-    next_prices["entry_date"] = next_prices["date"]
-    merged = pd.merge_asof(
-        s.sort_values(["symbol", "prediction_date"]),
-        next_prices.sort_values(["symbol", "entry_date"]),
-        left_on="prediction_date", right_on="entry_date", by="symbol",
-        direction="forward", allow_exact_matches=False,
-    )
-    merged["allocation_pct"] = merged["position_weight"].clip(lower=0, upper=cfg.max_position_pct)
-    merged["gross_allocation"] = capital * merged["allocation_pct"]
-    cost_rate = (cfg.commission_bps + cfg.slippage_bps) / 10_000.0
-    merged["entry_price"] = merged["open"] * (1.0 + cfg.slippage_bps / 10_000.0)
-    merged["quantity"] = (merged["gross_allocation"] / merged["entry_price"]).fillna(0).astype(int)
-    merged["entry_value"] = merged["quantity"] * merged["entry_price"]
-    merged["entry_cost"] = merged["entry_value"] * cost_rate
-    return merged.dropna(subset=["entry_date", "entry_price"])
+    future = p[["date", "symbol", "open", "close"]].rename(columns={"date": "entry_date"})
+    out = pd.merge_asof(s.sort_values(["symbol", "prediction_date"]),
+                        future.sort_values(["symbol", "entry_date"]),
+                        left_on="prediction_date", right_on="entry_date", by="symbol",
+                        direction="forward", allow_exact_matches=False)
+    out["allocation_pct"] = pd.to_numeric(out[weight_col], errors="coerce").clip(lower=0, upper=cfg.max_position_pct)
+    out["allocated_capital"] = capital * out["allocation_pct"]
+    out["entry_price"] = out["open"] * (1 + cfg.slippage_bps / 10_000)
+    out["quantity"] = (out["allocated_capital"] / out["entry_price"]).fillna(0).astype(int)
+    out["entry_value"] = out["quantity"] * out["entry_price"]
+    out["entry_cost"] = out["entry_value"] * cfg.commission_bps / 10_000
+    out["exit_price"] = out["close"] * (1 - cfg.slippage_bps / 10_000)
+    out["exit_value"] = out["quantity"] * out["exit_price"]
+    out["exit_cost"] = out["exit_value"] * cfg.commission_bps / 10_000
+    out["net_pnl"] = out["exit_value"] - out["entry_value"] - out["entry_cost"] - out["exit_cost"]
+    out["return_on_allocated"] = out["net_pnl"] / out["entry_value"].replace(0, pd.NA)
+    return out.dropna(subset=["entry_date", "entry_price", "exit_price"])
 
 
-def mark_to_market(trades: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
-    required = {"symbol", "entry_date", "quantity", "entry_value", "entry_cost"}
-    missing = required - set(trades.columns)
-    if missing:
-        raise ValueError(f"Missing trade columns: {sorted(missing)}")
-    p = prices.copy()
-    p["date"] = pd.to_datetime(p["date"]).dt.normalize()
-    p = p[["date", "symbol", "close"]].copy()
-    t = trades.copy()
-    t["symbol"] = t["symbol"].astype(str).str.strip()
-    t["entry_date"] = pd.to_datetime(t["entry_date"]).dt.normalize()
-    t = t.merge(p, left_on=["symbol", "entry_date"], right_on=["symbol", "date"], how="left")
-    t["exit_price"] = t["close"]
-    t["exit_value"] = t["quantity"] * t["exit_price"]
-    t["exit_cost"] = t["exit_value"] * (trades.attrs.get("exit_cost_rate", 0.0))
-    t["net_pnl"] = t["exit_value"] - t["entry_value"] - t["entry_cost"] - t["exit_cost"]
-    return t.drop(columns=["date"], errors="ignore")
+def save_trades(trades: pd.DataFrame, path: str | Path) -> None:
+    """Persist paper trades idempotently by prediction date/symbol/model."""
+    required = {"prediction_date", "symbol"}
+    if not required.issubset(trades.columns):
+        raise ValueError(f"Missing trade columns: {sorted(required - set(trades.columns))}")
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    incoming = trades.copy()
+    if path.exists():
+        incoming = pd.concat([pd.read_csv(path), incoming], ignore_index=True, sort=False)
+    keys = [c for c in ["prediction_date", "symbol", "model_version"] if c in incoming.columns]
+    incoming.drop_duplicates(keys or ["prediction_date", "symbol"], keep="last").to_csv(path, index=False)
