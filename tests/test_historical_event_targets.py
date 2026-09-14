@@ -44,11 +44,17 @@ def test_every_validation_target_has_a_source_mapping():
 def test_verified_event_count_targets():
     for target in _targets():
         source_id = target["source_id"]
-        path = FILES[source_id]
-        rows = [row for row in _rows(path) if row["source_id"] == source_id]
+        rows = [row for row in _rows(FILES[source_id]) if row["source_id"] == source_id]
         counts = Counter(row["action"] for row in rows)
         assert counts["exclude"] == int(target["expected_excludes"])
         assert counts["include"] == int(target["expected_includes"])
+
+
+def test_validation_target_effective_dates_match_evidence():
+    for target in _targets():
+        source_id = target["source_id"]
+        rows = [row for row in _rows(FILES[source_id]) if row["source_id"] == source_id]
+        assert {row["effective_date"] for row in rows} == {target["effective_date"]}
 
 
 def test_verified_event_keys_are_unique():
