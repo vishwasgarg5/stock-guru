@@ -1,7 +1,9 @@
 source_id,effective_date,expected_excludes,expected_includes,validation_basis
+ind_prs15092021,2021-09-30,22,22,official NIFTY 500 revised periodic-review table
 ind_prs24022022_1,2022-03-31,32,32,official NIFTY 500 table
 ind_prs01092022,2022-09-30,18,18,official NIFTY 500 table
 ind_prs16092022,2022-09-30,1,1,official NIFTY 500 scheme-of-arrangement table
+ind_prs17082023,2023-09-29,18,18,official NIFTY 500 table
 ind_prs17102023,2023-10-26,1,1,official NIFTY 500 permitted-to-trade table
 ind_prs23082024,2024-09-30,26,27,official periodic review after IDEA exclusion revocation
 ind_prs25092024,2024-09-30,1,0,official correction release adding PRSMJOHNSN exclusion
