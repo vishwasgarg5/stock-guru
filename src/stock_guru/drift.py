@@ -6,11 +6,7 @@ import pandas as pd
 
 def feature_drift(reference: pd.DataFrame, current: pd.DataFrame, features: list[str],
                   psi_threshold: float = 0.20, bins: int = 10) -> dict:
-    """Measure population stability index (PSI) for model-input drift.
-
-    Reference distributions define the bins; current observations are scored
-    against those fixed bins so the diagnostic is comparable over time.
-    """
+    """Measure population stability index (PSI) for model-input drift."""
     if bins < 2:
         raise ValueError("bins must be at least 2")
     rows = {}
@@ -23,11 +19,15 @@ def feature_drift(reference: pd.DataFrame, current: pd.DataFrame, features: list
             continue
         quantiles = ref.quantile([i / bins for i in range(1, bins)]).to_numpy()
         edges = [-math.inf, *quantiles.tolist(), math.inf]
+        edges = sorted(set(edges))
+        if len(edges) < 3:
+            continue
         ref_counts = pd.cut(ref, bins=edges, include_lowest=True).value_counts(sort=False).to_numpy(dtype=float)
         cur_counts = pd.cut(cur, bins=edges, include_lowest=True).value_counts(sort=False).to_numpy(dtype=float)
-        ref_pct = (ref_counts + 1e-6) / (ref_counts.sum() + 1e-6 * bins)
-        cur_pct = (cur_counts + 1e-6) / (cur_counts.sum() + 1e-6 * bins)
-        psi = float(((cur_pct - ref_pct) * (cur_pct / ref_pct).map(lambda x: math.log(x))).sum())
+        n = len(ref_counts)
+        ref_pct = (ref_counts + 1e-6) / (ref_counts.sum() + 1e-6 * n)
+        cur_pct = (cur_counts + 1e-6) / (cur_counts.sum() + 1e-6 * n)
+        psi = float(sum((c - r) * math.log(c / r) for r, c in zip(ref_pct, cur_pct)))
         rows[feature] = {"psi": psi, "drifted": psi >= psi_threshold,
                          "reference_samples": int(len(ref)), "current_samples": int(len(cur))}
     return rows
