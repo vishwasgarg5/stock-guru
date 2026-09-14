@@ -17,7 +17,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 ## Roadmap status
 
-- **Step 24 — Point-in-time universe:** interval builder and as-of filtering are implemented. Real historical NIFTY 500 constituent snapshots still need to be populated from a trustworthy historical source.
+- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, and provenance-bearing baseline/event reconstruction are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
@@ -27,6 +27,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 - `src/stock_guru/data.py`: current NIFTY 500 universe + OHLCV ingestion.
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
+- `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
 - `src/stock_guru/features.py`: leakage-safe technical/fundamental feature engineering.
 - `src/stock_guru/ranker.py`: XGBoost learning-to-rank stock selector.
@@ -63,6 +64,19 @@ PYTHONPATH=src python -c "from stock_guru.data import download_nifty500_prices; 
 ```
 
 This writes `data/prices.csv` and `data/nifty500_universe.csv`. The downloader uses the current constituent list, so this dataset is suitable for pipeline development but **not** a fully unbiased historical NIFTY 500 backtest.
+
+## Build a point-in-time universe history
+
+Supply an authoritative one-date baseline and a provenance-bearing event CSV. Events must contain `effective_date`, `symbol`, `action` (`include` or `exclude`), `source`, and `source_id`.
+
+```bash
+PYTHONPATH=src python -m stock_guru.cli universe-history \
+  --baseline data/nifty500_baseline.csv \
+  --events data/nifty500_events.csv \
+  --output data/nifty500_universe_history.csv
+```
+
+The reconstruction is deliberately conservative: it does not invent membership before the supplied baseline, rejects duplicate symbol/date events, and rejects impossible include/exclude transitions.
 
 ## Train
 
