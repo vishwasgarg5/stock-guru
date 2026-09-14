@@ -13,7 +13,6 @@ def _aggregate_regime_metrics(results) -> dict:
     for result in results:
         for regime, metrics in (getattr(result, "regime_metrics", None) or {}).items():
             buckets.setdefault(str(regime), []).append(metrics)
-
     aggregated = {}
     for regime, rows in buckets.items():
         total = sum(int(row.get("samples", 0)) for row in rows)
@@ -22,11 +21,7 @@ def _aggregate_regime_metrics(results) -> dict:
         summary = {"samples": total}
         keys = {key for row in rows for key in row if key != "samples"}
         for key in sorted(keys):
-            weighted = [
-                (float(row[key]), int(row.get("samples", 0)))
-                for row in rows
-                if key in row
-            ]
+            weighted = [(float(row[key]), int(row.get("samples", 0))) for row in rows if key in row]
             denominator = sum(weight for _, weight in weighted)
             if denominator:
                 summary[key] = float(sum(value * weight for value, weight in weighted) / denominator)
@@ -69,7 +64,7 @@ def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20, recent
         return None
     data = data.sort_values("prediction_date") if "prediction_date" in data.columns else data
     recent = data.tail(max(1, recent_rows))
-    result = {
+    return {
         "feedback_rows": int(len(data)),
         "feedback_direction_accuracy": round(float(data["direction_correct"].astype(float).mean()), 12),
         "feedback_return_mae": round(float(data["return_error"].abs().mean()), 12),
@@ -77,7 +72,6 @@ def summarize_feedback(feedback: pd.DataFrame | None, min_rows: int = 20, recent
         "recent_feedback_direction_accuracy": round(float(recent["direction_correct"].astype(float).mean()), 12),
         "recent_feedback_return_mae": round(float(recent["return_error"].abs().mean()), 12),
     }
-    return result
 
 
 def _metric(metrics: dict, key: str, default: float) -> float:
@@ -93,16 +87,9 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
                    ranking_tolerance: float = 0.0, feedback: dict | None = None,
                    min_validation_folds: int = 20, min_regime_samples: int = 10,
                    min_adverse_regime_direction: float = 0.45) -> bool:
-    """Promote only after robust OOS improvement and live/regime sanity checks.
-
-    Legacy metric dictionaries without validation_folds/regime_metrics remain
-    supported for compatibility tests and older persisted artifacts. New
-    walk-forward summaries are held to minimum validation coverage and an
-    adverse-regime directional-accuracy floor when enough samples exist.
-    """
+    """Promote only after robust OOS improvement and live/regime sanity checks."""
     if "validation_folds" in new and _metric(new, "validation_folds", 0.0) < min_validation_folds:
         return False
-
     regime_metrics = new.get("regime_metrics") or {}
     for regime in ("bear", "high_vol_bear"):
         metrics = regime_metrics.get(regime) or {}
@@ -111,26 +98,39 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
             direction = _metric(metrics, "close_direction_accuracy", float("nan"))
             if not math.isfinite(direction) or direction < min_adverse_regime_direction:
                 return False
-
     old_rmse = _metric(old, "pred_close_rmse", float("inf")) if old else float("inf")
     old_direction = _metric(old, "close_direction_accuracy", 0.0) if old else 0.0
     new_rmse = _metric(new, "pred_close_rmse", float("inf"))
     new_direction = _metric(new, "close_direction_accuracy", 0.0)
-
     required_direction = old_direction
     if feedback is not None:
         required_direction = max(required_direction, _metric(feedback, "feedback_direction_accuracy", 0.0))
-
     if not (new_rmse < old_rmse - rmse_tolerance and new_direction >= required_direction):
         return False
     if old is None:
         return True
-
     for key in ["top_k_excess_return", "precision_at_k"]:
-        if key in old and key in new:
-            if _metric(new, key, float("-inf")) < _metric(old, key, float("-inf")) - ranking_tolerance:
-                return False
+        if key in old and key in new and _metric(new, key, float("-inf")) < _metric(old, key, float("-inf")) - ranking_tolerance:
+            return False
     return True
+
+
+def select_champion(candidates: dict[str, dict], incumbent: str | None = None,
+                    feedback: dict | None = None, **promotion_kwargs) -> dict:
+    """Choose a champion from candidate OOS summaries without silently promoting failures."""
+    if not candidates:
+        raise ValueError("No candidate metrics supplied")
+    incumbent_metrics = candidates.get(incumbent) if incumbent else None
+    eligible = {
+        name: metrics for name, metrics in candidates.items()
+        if should_promote(incumbent_metrics, metrics, feedback=feedback, **promotion_kwargs)
+    }
+    if incumbent and incumbent in candidates and incumbent not in eligible:
+        return {"champion": incumbent, "promoted": False, "reason": "no_candidate_passed_promotion_gate"}
+    if not eligible:
+        return {"champion": None, "promoted": False, "reason": "no_candidate_passed_promotion_gate"}
+    winner = min(eligible, key=lambda name: (_metric(eligible[name], "pred_close_rmse", float("inf")), -_metric(eligible[name], "close_direction_accuracy", 0.0)))
+    return {"champion": winner, "promoted": winner != incumbent, "reason": "candidate_passed_promotion_gate"}
 
 
 def save_metrics(model_dir: str | Path, metrics: dict) -> None:
