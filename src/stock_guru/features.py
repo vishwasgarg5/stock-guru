@@ -31,9 +31,7 @@ def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     out["rsi_14"] = 100 - (100 / (1 + rs))
     returns = g["close"].pct_change()
     out["volatility_20"] = returns.groupby(out["symbol"]).transform(lambda s: s.rolling(20).std())
-    out["downside_volatility_20"] = returns.clip(upper=0).groupby(out["symbol"]).transform(
-        lambda s: s.rolling(20).std()
-    )
+    out["downside_volatility_20"] = returns.clip(upper=0).groupby(out["symbol"]).transform(lambda s: s.rolling(20).std())
     out["volume_ratio_20"] = out["volume"] / out.groupby("symbol")["volume"].transform(lambda s: s.rolling(20).mean())
     out["atr_pct_14"] = ((out["high"] - out["low"]) / out["close"]).groupby(out["symbol"]).transform(lambda s: s.rolling(14).mean())
     return out
@@ -71,6 +69,16 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     for c in ["sma_10", "sma_20", "sma_50", "ema_20", "ema_50"]:
         out[f"{c}_ratio"] = out[c] / out["close"] - 1
     technical += ["sma_10_ratio", "sma_20_ratio", "sma_50_ratio", "ema_20_ratio", "ema_50_ratio"]
-    features = fundamentals + technical + REGIME_FEATURES
+
+    # Let the model learn that the same stock signal can behave differently
+    # under different market conditions, using only prediction-time data.
+    out["trend_regime_interaction"] = out["ret_20d"] * out["market_ret_20d"].fillna(0.0)
+    out["risk_regime_interaction"] = out["volatility_20"] * out["market_volatility_20"].fillna(0.0)
+    out["breadth_trend_interaction"] = out["ret_20d"] * out["market_breadth"].fillna(0.0)
+    regime_interactions = [
+        "trend_regime_interaction", "risk_regime_interaction", "breadth_trend_interaction"
+    ]
+
+    features = fundamentals + technical + REGIME_FEATURES + regime_interactions
     out[features] = out[features].replace([np.inf, -np.inf], np.nan)
     return out, features
