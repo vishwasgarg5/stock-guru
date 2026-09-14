@@ -1,0 +1,3 @@
+effective_date,symbol,action,source,source_id
+2022-09-30,EQUITAS,exclude,https://www.niftyindices.com/Press_Release/ind_prs16092022.pdf,ind_prs16092022
+2022-09-30,SHOPERSTOP,include,https://www.niftyindices.com/Press_Release/ind_prs16092022.pdf,ind_prs16092022
