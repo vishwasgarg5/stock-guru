@@ -33,6 +33,7 @@ def test_events_require_provenance_columns():
 def test_events_reject_duplicate_symbol_date():
     events = _events().copy()
     events.loc[1, "effective_date"] = events.loc[0, "effective_date"]
+    events.loc[1, "symbol"] = events.loc[0, "symbol"]
     with pytest.raises(ValueError, match="conflicting duplicate"):
         apply_events_to_baseline(_baseline(), events)
 
