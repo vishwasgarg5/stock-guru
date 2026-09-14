@@ -24,7 +24,8 @@ The repository contains the model baseline plus guarded infrastructure for point
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
 - **Steps 29–43 — PIT/data-quality hardening:** strict PIT fundamentals joining, optional PIT universe filtering, numeric/finite fundamental validation, market-input guards, OHLC fail-closed behavior, source manifests, provenance-aware coverage, and regression protection are implemented.
 - **Steps 44–53 — PIT research integration:** walk-forward and strategy backtests consume optional PIT fundamentals/universe intervals; CLI train/predict/backtest accept those datasets; empty PIT universes fail closed; interval overlaps are rejected; source snapshot gaps are reported; and PIT regression tests are in CI.
-- **Step 54 onward:** import verified historical NIFTY 500 evidence, run source fingerprint/coverage audits, populate dated snapshots/events, connect real filing-derived fundamentals, and only then publish survivorship-bias-free historical performance claims.
+- **Steps 54–73 — PIT evidence hardening:** source files can be SHA-256 fingerprinted, audit reports can be persisted, source mutations can be detected, snapshot sources can be reconciled on common dates, and CLI support is available. These controls do not infer or fabricate missing historical membership.
+- **Step 74 onward:** import verified historical NIFTY 500 evidence, run source fingerprint/coverage audits, populate dated snapshots/events, connect real filing-derived fundamentals, and only then publish survivorship-bias-free historical performance claims.
 
 ## Design
 
@@ -33,6 +34,8 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/universe_ingest.py`: normalization and validation for PIT universe snapshots/events.
 - `src/stock_guru/universe_source.py`: provenance manifest, source validation, and snapshot gap diagnostics.
+- `src/stock_guru/universe_audit.py`: SHA-256 source fingerprinting and immutable audit reports.
+- `src/stock_guru/universe_reconciliation.py`: common-date reconciliation between independent membership sources.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
@@ -65,7 +68,7 @@ PIT universe snapshots must contain `as_of` and `symbol`. Event imports must add
 
 ## Validate a historical source before ingestion
 
-Every real historical snapshot dataset should be accompanied by a provenance manifest containing `dataset`, `source_name`, `source_url`, `retrieved_at`, and `license_or_terms`.
+Every real historical snapshot dataset should be accompanied by a provenance manifest containing `dataset`, `source_name`, `source_url`, `retrieved_at`, and `license_or_terms`. Use `data/nifty500_source_manifest_template.json` as a starting point.
 
 ```bash
 PYTHONPATH=src python -m stock_guru.cli universe-source-validate \
@@ -75,6 +78,31 @@ PYTHONPATH=src python -m stock_guru.cli universe-source-validate \
 ```
 
 The validator normalizes symbols and dates, rejects duplicate observations, reports the observed snapshot span and constituent-count range, and surfaces long gaps without filling them. If a source contract explicitly guarantees a fixed snapshot size, add `--expected-constituents N --require-full-snapshot-size`; otherwise source-specific counts are allowed.
+
+## Fingerprint a validated source
+
+After validation, create a byte-level audit record. This makes later source mutation detectable without treating a digest as proof of historical completeness.
+
+```bash
+PYTHONPATH=src python -m stock_guru.cli universe-audit \
+  --snapshots data/nifty500_snapshots.csv \
+  --manifest data/nifty500_source_manifest.json \
+  --gap-threshold-days 180 \
+  --output artifacts/universe_source_audit.json
+```
+
+The audit records SHA-256 fingerprints for both the snapshot and manifest files plus the validation summary.
+
+## Reconcile independent sources
+
+When two independently sourced snapshot datasets overlap in time, compare exact membership sets rather than silently selecting one source:
+
+```python
+from stock_guru.universe_reconciliation import reconcile_snapshots
+report = reconcile_snapshots(source_a, source_b)
+```
+
+A mismatch is surfaced explicitly with symbols present only in each source. Dates that exist in only one source are not filled or treated as proof of missing history.
 
 ## Check universe coverage
 
