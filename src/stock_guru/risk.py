@@ -14,6 +14,7 @@ class RiskConfig:
     min_confidence: float = 0.60
     min_forecast_confidence: float = 0.0
     max_pred_close_uncertainty_pct: float = 0.08
+    min_expected_return_to_uncertainty: float = 0.0
     max_atr_pct: float = 0.08
     max_volatility_20: float = 0.06
     max_downside_volatility_20: float = 0.045
@@ -33,9 +34,9 @@ def _safe_float(value, default=float("nan")) -> float:
 def _regime_config(config: RiskConfig, regime: str) -> RiskConfig:
     """Tighten portfolio risk limits for adverse market regimes."""
     adjustments = {
-        "high_vol_bear": dict(max_position_pct=0.075, max_sector_pct=0.20, max_total_exposure_pct=0.50, min_confidence=0.70, min_forecast_confidence=0.55, max_pred_close_uncertainty_pct=0.06, max_atr_pct=0.06, max_volatility_20=0.045, max_downside_volatility_20=0.032, min_volume_ratio_20=0.75, min_expected_return=0.004),
-        "high_volatility": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.70, min_confidence=0.65, min_forecast_confidence=0.50, max_pred_close_uncertainty_pct=0.07, max_atr_pct=0.07, max_volatility_20=0.05, max_downside_volatility_20=0.038, min_volume_ratio_20=0.65, min_expected_return=0.003),
-        "bear": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.50, min_confidence=0.70, min_forecast_confidence=0.55, max_pred_close_uncertainty_pct=0.06, max_atr_pct=0.07, max_volatility_20=0.05, max_downside_volatility_20=0.035, min_volume_ratio_20=0.65, min_expected_return=0.004),
+        "high_vol_bear": dict(max_position_pct=0.075, max_sector_pct=0.20, max_total_exposure_pct=0.50, min_confidence=0.70, min_forecast_confidence=0.55, max_pred_close_uncertainty_pct=0.06, min_expected_return_to_uncertainty=0.50, max_atr_pct=0.06, max_volatility_20=0.045, max_downside_volatility_20=0.032, min_volume_ratio_20=0.75, min_expected_return=0.004),
+        "high_volatility": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.70, min_confidence=0.65, min_forecast_confidence=0.50, max_pred_close_uncertainty_pct=0.07, min_expected_return_to_uncertainty=0.35, max_atr_pct=0.07, max_volatility_20=0.05, max_downside_volatility_20=0.038, min_volume_ratio_20=0.65, min_expected_return=0.003),
+        "bear": dict(max_position_pct=0.10, max_sector_pct=0.25, max_total_exposure_pct=0.50, min_confidence=0.70, min_forecast_confidence=0.55, max_pred_close_uncertainty_pct=0.06, min_expected_return_to_uncertainty=0.50, max_atr_pct=0.07, max_volatility_20=0.05, max_downside_volatility_20=0.035, min_volume_ratio_20=0.65, min_expected_return=0.004),
         "bull": dict(max_total_exposure_pct=1.00), "neutral": dict(), "unknown": dict(),
     }
     return replace(config, **adjustments.get(str(regime), {}))
@@ -47,7 +48,7 @@ def _effective_configs(predictions: pd.DataFrame, config: RiskConfig) -> pd.Seri
 
 
 def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = None) -> pd.DataFrame:
-    """Filter predictions using regime-aware forecast uncertainty, volatility, liquidity and return thresholds."""
+    """Filter predictions using regime-aware uncertainty, volatility, liquidity and return thresholds."""
     cfg = config or RiskConfig()
     out = predictions.copy()
     out["expected_return"] = out["pred_close"] / out["close"] - 1
@@ -57,6 +58,11 @@ def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = No
     checks["confidence_ok"] = [_safe_float(out.get("rank_confidence", pd.Series(0.0, index=out.index)).loc[idx], 0.0) >= effective.loc[idx].min_confidence for idx in out.index]
     checks["forecast_confidence_ok"] = [_safe_float(out.get("forecast_confidence", pd.Series(float("nan"), index=out.index)).loc[idx]) >= effective.loc[idx].min_forecast_confidence for idx in out.index]
     checks["uncertainty_ok"] = [_safe_float(out.get("pred_close_uncertainty_pct", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_pred_close_uncertainty_pct for idx in out.index]
+    checks["uncertainty_return_ok"] = [
+        _safe_float(out["expected_return"].loc[idx], float("nan")) >= effective.loc[idx].min_expected_return_to_uncertainty * _safe_float(out.get("pred_close_uncertainty_pct", pd.Series(float("nan"), index=out.index)).loc[idx], float("nan"))
+        if effective.loc[idx].min_expected_return_to_uncertainty > 0 else True
+        for idx in out.index
+    ]
     checks["atr_ok"] = [_safe_float(out.get("atr_pct_14", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_atr_pct for idx in out.index]
     checks["volatility_ok"] = [_safe_float(out.get("volatility_20", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_volatility_20 for idx in out.index]
     checks["downside_volatility_ok"] = [_safe_float(out.get("downside_volatility_20", pd.Series(float("nan"), index=out.index)).loc[idx]) <= effective.loc[idx].max_downside_volatility_20 for idx in out.index]
@@ -65,6 +71,8 @@ def apply_risk_filters(predictions: pd.DataFrame, config: RiskConfig | None = No
     for col, check_name in [("atr_pct_14", "atr_ok"), ("volatility_20", "volatility_ok"), ("downside_volatility_20", "downside_volatility_ok"), ("volume_ratio_20", "liquidity_ok"), ("forecast_confidence", "forecast_confidence_ok"), ("pred_close_uncertainty_pct", "uncertainty_ok")]:
         if col not in out:
             checks[check_name] = False
+    if "pred_close_uncertainty_pct" not in out:
+        checks["uncertainty_return_ok"] = False
     out["risk_pass"] = checks.all(axis=1)
     out["risk_reason"] = checks.apply(lambda row: "approved" if row.all() else ";".join(name.replace("_ok", "") for name, passed in row.items() if not passed), axis=1)
     out["risk_regime"] = out.get("market_regime", "unknown")
@@ -84,8 +92,10 @@ def size_positions(predictions: pd.DataFrame, config: RiskConfig | None = None) 
     risk = out.loc[eligible, "atr_pct_14"].clip(lower=0.005)
     rank_confidence = out.loc[eligible, "rank_confidence"].clip(lower=0.0, upper=1.0)
     forecast_confidence = out.loc[eligible, "forecast_confidence"].clip(lower=0.0, upper=1.0)
+    uncertainty = out.loc[eligible, "pred_close_uncertainty_pct"].clip(lower=0.0)
     confidence = (rank_confidence * forecast_confidence).pow(0.5)
-    raw = cfg.target_risk_pct / risk * (0.5 + 0.5 * confidence)
+    uncertainty_penalty = (1.0 / (1.0 + 10.0 * uncertainty)).clip(lower=0.25, upper=1.0)
+    raw = cfg.target_risk_pct / risk * (0.5 + 0.5 * confidence) * uncertainty_penalty
     per_position_cap = pd.Series([effective.loc[idx].max_position_pct for idx in raw.index], index=raw.index, dtype=float)
     raw = pd.Series([min(value, cap) for value, cap in zip(raw, per_position_cap)], index=raw.index)
     total_cap = min(effective.loc[idx].max_total_exposure_pct for idx in raw.index)
