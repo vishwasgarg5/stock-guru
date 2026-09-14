@@ -1,0 +1,2 @@
+symbol,reported_date,available_date,roe,roce,eps_growth,revenue_growth,pe,pb,debt_to_equity,operating_margin,free_cash_flow,source,source_id
+REPLACE_SYMBOL,2026-06-30,2026-08-01,,,,,,,,,,,REPLACE_WITH_SOURCE,REPLACE_WITH_SOURCE_ID
