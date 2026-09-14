@@ -82,6 +82,8 @@ class OHLCForecaster:
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
         train = df.dropna(subset=features + TARGETS).copy()
+        if train.empty:
+            raise ValueError("No complete rows available for OHLC model training")
         for target, model in self.models.items():
             model.fit(train[features], train[target])
         self._fit_regime_adjustments(train)
@@ -99,6 +101,8 @@ class OHLCForecaster:
         return out
 
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            raise ValueError("No rows available for OHLC prediction")
         metadata = [c for c in ["date", "symbol", "close", "rank_score"] if c in df.columns]
         out = df[metadata].copy()
         labels = df.apply(regime_label, axis=1)
