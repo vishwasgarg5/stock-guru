@@ -67,5 +67,8 @@ class _ConstantModel(BaseEstimator):
     def __init__(self, value=0.0):
         self.value = value
 
+    def fit(self, frame, target):
+        return self
+
     def predict(self, frame):
         return np.full(len(frame), self.value, dtype=float)
