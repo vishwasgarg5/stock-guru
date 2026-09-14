@@ -15,17 +15,20 @@ Adaptive NIFTY 500 stock-selection and next-day OHLC forecasting pipeline.
 
 The repository contains the model baseline plus guarded infrastructure for point-in-time research, paper execution, feedback settlement, and an optional temporal challenger. The bootstrap data layer fetches the current NIFTY 500 universe and daily NSE OHLCV history. Current constituents are useful for pipeline development, but are not a substitute for historical constituent membership.
 
+Recent production-hardening work also adds strict market-session calendar validation and CSV loading, paper-trading configuration guards, source-file fingerprints for PIT universe and fundamentals, provenance-pair validation for filing-derived fundamentals, and model-artifact integrity checks. These controls improve reproducibility and fail-closed behavior; they do not create missing historical data.
+
 ## Roadmap status
 
 - **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, coverage-quality reporting, interval integrity checks, and source-gap diagnostics are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
-- **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
+- **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, idempotent trade persistence, and configuration validation are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
 - **Steps 29–43 — PIT/data-quality hardening:** strict PIT fundamentals joining, optional PIT universe filtering, numeric/finite fundamental validation, market-input guards, OHLC fail-closed behavior, source manifests, provenance-aware coverage, and regression protection are implemented.
 - **Steps 44–53 — PIT research integration:** walk-forward and strategy backtests consume optional PIT fundamentals/universe intervals; CLI train/predict/backtest accept those datasets; empty PIT universes fail closed; interval overlaps are rejected; source snapshot gaps are reported; and PIT regression tests are in CI.
 - **Steps 54–73 — PIT evidence hardening:** source files can be SHA-256 fingerprinted, audit reports can be persisted, source mutations can be detected, snapshot sources can be reconciled on common dates, and CLI support is available. These controls do not infer or fabricate missing historical membership.
-- **Step 74 onward:** import verified historical NIFTY 500 evidence, run source fingerprint/coverage audits, populate dated snapshots/events, connect real filing-derived fundamentals, and only then publish survivorship-bias-free historical performance claims.
+- **Steps 74–103 — production hardening:** market-session scheduling is validated and reusable; paper-trading assumptions fail closed; PIT source fingerprints can detect mutation; fundamentals require complete provenance when provenance columns are present; and production model directories can be structurally validated before use. All of these controls are covered by regression tests.
+- **Step 104 onward:** import verified historical NIFTY 500 evidence, run source fingerprint/coverage audits, populate dated snapshots/events, connect real filing-derived fundamentals, and only then publish survivorship-bias-free historical performance claims.
 
 ## Design
 
@@ -33,12 +36,13 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots, interval validation, and membership filtering.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/universe_ingest.py`: normalization and validation for PIT universe snapshots/events.
-- `src/stock_guru/universe_source.py`: provenance manifest, source validation, and snapshot gap diagnostics.
+- `src/stock_guru/universe_source.py`: provenance manifest, source validation, source fingerprinting, and snapshot gap diagnostics.
 - `src/stock_guru/universe_audit.py`: SHA-256 source fingerprinting and immutable audit reports.
 - `src/stock_guru/universe_reconciliation.py`: common-date reconciliation between independent membership sources.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
+- `src/stock_guru/fundamentals_quality.py`: provenance audit, source fingerprinting, and coverage report.
 - `src/stock_guru/pit.py`: strict point-in-time fundamentals as-of join used by feature construction.
 - `src/stock_guru/features.py`: leakage-safe technical/fundamental feature engineering.
 - `src/stock_guru/ranker.py`: XGBoost learning-to-rank stock selector.
@@ -48,7 +52,10 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/walk_forward.py`: expanding-window PIT-aware validation.
 - `src/stock_guru/retrainer.py`: validation-gated model replacement and labeled prediction storage.
 - `src/stock_guru/feedback.py`: next-session prediction settlement and feedback labeling.
-- `src/stock_guru/paper_trading.py`: paper execution with costs and position limits.
+- `src/stock_guru/paper_trading.py`: paper execution with costs, position limits, and validated configuration.
+- `src/stock_guru/scheduling.py`: validated next/previous trading-session helpers.
+- `src/stock_guru/calendar_io.py`: validated CSV trading-calendar loader.
+- `src/stock_guru/artifact_validation.py`: production model artifact integrity checks.
 - `src/stock_guru/temporal_challenger.py`: optional isolated LSTM challenger.
 - `src/stock_guru/cli.py`: command-line entry point.
 - `tests/`: regression and smoke tests.
@@ -68,7 +75,7 @@ PIT universe snapshots must contain `as_of` and `symbol`. Event imports must add
 
 ## Validate a historical source before ingestion
 
-Every real historical snapshot dataset should be accompanied by a provenance manifest containing `dataset`, `source_name`, `source_url`, `retrieved_at`, and `license_or_terms`. Use `data/nifty500_source_manifest_template.json` as a starting point.
+Every real historical snapshot dataset should be accompanied by a provenance manifest containing `dataset`, `source_name`, `source_url`, `retrieved_at`, and `license_or_terms`. Use `data/nifty500_source_manifest_template.json` as a starting point. The optional `source_sha256` field can pin the exact source bytes.
 
 ```bash
 PYTHONPATH=src python -m stock_guru.cli universe-source-validate \
@@ -91,7 +98,7 @@ PYTHONPATH=src python -m stock_guru.cli universe-audit \
   --output artifacts/universe_source_audit.json
 ```
 
-The audit records SHA-256 fingerprints for both the snapshot and manifest files plus the validation summary.
+The audit records SHA-256 fingerprints for both the snapshot and manifest files plus the validation summary. PIT fundamentals support the same byte-level fingerprinting through `stock_guru.fundamentals_quality`.
 
 ## Reconcile independent sources
 
