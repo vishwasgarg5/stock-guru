@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import numpy as np
 import pandas as pd
 
 REQUIRED = {"symbol", "reported_date", "available_date"}
@@ -11,7 +12,8 @@ def validate_pit_fundamentals(frame: pd.DataFrame) -> pd.DataFrame:
 
     ``available_date`` is the first market date on which the value may be used;
     it must never precede the report date. Duplicate symbol/available_date rows
-    are rejected so as-of joins remain deterministic.
+    are rejected so as-of joins remain deterministic. Optional value columns
+    must be numeric and finite when populated.
     """
     missing = REQUIRED - set(frame.columns)
     if missing:
@@ -26,6 +28,16 @@ def validate_pit_fundamentals(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("available_date cannot precede reported_date")
     if out.duplicated(["symbol", "available_date"]).any():
         raise ValueError("Duplicate symbol/available_date PIT observations")
+
+    value_columns = [c for c in out.columns if c not in REQUIRED]
+    for column in value_columns:
+        if column in {"source", "source_id"}:
+            continue
+        converted = pd.to_numeric(out[column], errors="coerce")
+        invalid = out[column].notna() & (converted.isna() | ~np.isfinite(converted))
+        if invalid.any():
+            raise ValueError(f"PIT fundamental column {column!r} contains nonnumeric or nonfinite values")
+        out[column] = converted
     return out.sort_values(["symbol", "available_date"]).reset_index(drop=True)
 
 
