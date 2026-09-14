@@ -6,6 +6,7 @@ import pytest
 from stock_guru.universe_source import (
     load_source_manifest,
     validate_historical_snapshots,
+    validate_source_bundle,
     validate_source_manifest,
 )
 
@@ -52,3 +53,25 @@ def test_historical_snapshot_can_be_validated_without_fabrication():
     out = validate_historical_snapshots(snapshots)
     assert len(out) == 3
     assert set(out["symbol"]) == {"A", "B", "C"}
+
+
+def test_source_bundle_returns_audit_summary(tmp_path):
+    snapshots = tmp_path / "snapshots.csv"
+    snapshots.write_text(
+        "as_of,symbol\n2024-01-31,A\n2024-01-31,B\n2024-02-01,A\n",
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest()), encoding="utf-8")
+    report = validate_source_bundle(snapshots, manifest_path)
+    assert report["provenance_validated"] is True
+    assert report["snapshot_dates"] == 2
+    assert report["min_constituents"] == 1
+    assert report["max_constituents"] == 2
+
+
+def test_source_bundle_requires_manifest(tmp_path):
+    snapshots = tmp_path / "snapshots.csv"
+    snapshots.write_text("as_of,symbol\n2024-01-31,A\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        validate_source_bundle(snapshots, tmp_path / "missing.json")
