@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from stock_guru.temporal_challenger import LSTMChallenger, LSTMConfig, temporal_challenger_metrics
+from stock_guru.temporal_challenger import (
+    LSTMChallenger,
+    LSTMConfig,
+    should_promote_temporal_challenger,
+    temporal_challenger_metrics,
+)
 
 
 def test_lstm_challenger_rejects_wrong_shapes_before_optional_dependency():
@@ -57,3 +62,19 @@ def test_temporal_challenger_metrics_reject_invalid_arrays():
         temporal_challenger_metrics(np.zeros(2), np.zeros(2))
     with pytest.raises(ValueError, match="finite"):
         temporal_challenger_metrics(np.array([[np.nan]]), np.array([[0.0]]))
+
+
+def test_temporal_challenger_promotion_requires_minimum_samples_and_improvement():
+    champion = {"samples": 200, "rmse": 1.0}
+    assert should_promote_temporal_challenger(champion, {"samples": 99, "rmse": 0.5}) is False
+    assert should_promote_temporal_challenger(champion, {"samples": 100, "rmse": 0.991}) is False
+    assert should_promote_temporal_challenger(champion, {"samples": 100, "rmse": 0.99}) is True
+
+
+def test_temporal_challenger_promotion_rejects_invalid_metrics():
+    champion = {"samples": 200, "rmse": 1.0}
+    assert should_promote_temporal_challenger(champion, {"samples": 100, "rmse": np.nan}) is False
+    with pytest.raises(ValueError, match="min_samples"):
+        should_promote_temporal_challenger(champion, {"samples": 100, "rmse": 0.5}, min_samples=0)
+    with pytest.raises(ValueError, match="min_rmse_improvement"):
+        should_promote_temporal_challenger(champion, {"samples": 100, "rmse": 0.5}, min_rmse_improvement=1.0)
