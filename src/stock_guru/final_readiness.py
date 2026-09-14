@@ -6,6 +6,9 @@ from typing import Any
 from .production_readiness import evaluate_readiness
 
 
+REPORT_SCHEMA_VERSION = "1.0"
+
+
 def build_final_readiness_report(
     *,
     model_exists: bool,
@@ -21,7 +24,7 @@ def build_final_readiness_report(
     feedback_cycle_validated: bool,
     artifact_reproducible: bool,
 ) -> dict[str, Any]:
-    """Build a conservative, auditable final-readiness decision.
+    """Build a conservative, auditable final-readiness/certification report.
 
     This function deliberately cannot manufacture evidence. A production-ready
     result requires both the baseline gates and real historical-data/evaluation
@@ -45,12 +48,12 @@ def build_final_readiness_report(
     }
     evidence_ok = all(evidence.values())
     status = "ready" if baseline["status"] == "ready" and evidence_ok else "blocked"
-    blockers = [
-        gate["reason"] for gate in baseline["gates"] if not gate["passed"]
-    ]
+    blockers = [gate["reason"] for gate in baseline["gates"] if not gate["passed"]]
     blockers.extend(name for name, passed in evidence.items() if not passed)
     return {
+        "schema_version": REPORT_SCHEMA_VERSION,
         "status": status,
+        "certification": "READY" if status == "ready" else "BLOCKED",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "baseline": baseline,
         "evidence": evidence,
