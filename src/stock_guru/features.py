@@ -14,7 +14,18 @@ BASE_FUNDAMENTALS = [
 
 def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add leakage-safe features using information available through each row's date."""
-    out = df.sort_values(["symbol", "date"]).copy()
+    required = {"date", "symbol", "open", "high", "low", "close", "volume"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing market columns: {sorted(missing)}")
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
+    out["symbol"] = out["symbol"].astype(str).str.strip()
+    if out["date"].isna().any() or out["symbol"].eq("").any():
+        raise ValueError("Market data contains invalid dates or blank symbols")
+    if out.duplicated(["date", "symbol"]).any():
+        raise ValueError("Market data contains duplicate date/symbol rows")
+    out = out.sort_values(["symbol", "date"]).copy()
     g = out.groupby("symbol", group_keys=False)
     close = g["close"]
     out["ret_1d"] = close.pct_change()
