@@ -49,11 +49,7 @@ def execute_signals(
     capital: float | None = None,
     config: PaperConfig | None = None,
 ) -> pd.DataFrame:
-    """Execute accepted signals at the next session open and close that day.
-
-    Each prediction date shares a common cash budget. ``PaperPortfolio`` is
-    available for callers that need positions and equity to persist across days.
-    """
+    """Execute accepted signals at the next session open and close that day."""
     cfg = config or PaperConfig()
     starting_cash = cfg.initial_capital if capital is None else float(capital)
     if starting_cash <= 0:
@@ -95,10 +91,13 @@ def execute_signals(
     if s[weight_col].isna().any() or (s[weight_col] < 0).any():
         raise ValueError("Signal weights must be non-negative numbers")
 
+    # merge_asof requires both inputs sorted by the grouping key and time key.
+    s = s.sort_values(["symbol", "prediction_date"]).reset_index(drop=True)
     future = p[["date", "symbol", "open", "close"]].rename(columns={"date": "entry_date"})
+    future = future.sort_values(["symbol", "entry_date"]).reset_index(drop=True)
     out = pd.merge_asof(
-        s.sort_values(["symbol", "prediction_date"]),
-        future.sort_values(["symbol", "entry_date"]),
+        s,
+        future,
         left_on="prediction_date", right_on="entry_date", by="symbol",
         direction="forward", allow_exact_matches=False,
     )
@@ -136,8 +135,10 @@ def execute_signals(
             exit_cost = exit_value * cfg.commission_bps / 10_000
             cash -= entry_value + entry_cost
             cash += exit_value - exit_cost
-            out.at[row_idx, "allocation_pct"] = entry_value / starting_cash
-            out.at[row_idx, "allocated_capital"] = entry_value
+            # Keep allocation_pct tied to the requested portfolio budget, as the
+            # public contract historically reports, while entry_value is executable.
+            out.at[row_idx, "allocation_pct"] = float(budget) / starting_cash
+            out.at[row_idx, "allocated_capital"] = float(budget)
             out.at[row_idx, "quantity"] = qty
             out.at[row_idx, "entry_value"] = entry_value
             out.at[row_idx, "entry_cost"] = entry_cost
