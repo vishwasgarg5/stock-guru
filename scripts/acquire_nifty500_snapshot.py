@@ -13,7 +13,7 @@ NIFTY500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.c
 EXPECTED_COUNT = 500
 
 
-def fetch_snapshot() -> pd.DataFrame:
+def fetch_snapshot() -> tuple[pd.DataFrame, str]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Stock-Guru free public evidence acquisition)",
         "Accept": "text/csv,*/*",
@@ -21,6 +21,7 @@ def fetch_snapshot() -> pd.DataFrame:
     }
     response = requests.get(NIFTY500_URL, headers=headers, timeout=60)
     response.raise_for_status()
+    source_sha256 = hashlib.sha256(response.content).hexdigest()
     frame = pd.read_csv(BytesIO(response.content))
     symbol_col = next((c for c in frame.columns if c.strip().lower() in {"symbol", "ticker"}), None)
     if symbol_col is None:
@@ -33,17 +34,18 @@ def fetch_snapshot() -> pd.DataFrame:
     out = frame.copy()
     out.insert(0, "as_of", date.today().isoformat())
     out["symbol"] = symbols
-    return out
+    return out, source_sha256
 
 
 def save_snapshot(output: Path, manifest: Path) -> None:
-    frame = fetch_snapshot()
+    frame, source_sha256 = fetch_snapshot()
     output.parent.mkdir(parents=True, exist_ok=True)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output, index=False)
-    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    file_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
     manifest.write_text(
-        "dataset,source_name,source_url,retrieved_at,license_or_terms,source_sha256,file_sha256\\n"
-        f"nifty500_membership,NSE Indices,{NIFTY500_URL},{date.today().isoformat()},public index constituent download,{digest},{digest}\\n",
+        "dataset,source_name,source_url,retrieved_at,license_or_terms,source_sha256,file_sha256\n"
+        f"nifty500_membership,NSE Indices,{NIFTY500_URL},{date.today().isoformat()},public index constituent download,{source_sha256},{file_sha256}\n",
         encoding="utf-8",
     )
 
