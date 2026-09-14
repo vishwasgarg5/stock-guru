@@ -1,0 +1,8 @@
+{
+  "model_version": "REPLACE_WITH_MODEL_VERSION",
+  "trained_through": "REPLACE_WITH_ISO8601_DATE",
+  "ranker_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "ohlc_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "features_sha256": "REPLACE_WITH_64_CHAR_SHA256",
+  "metadata_sha256": "REPLACE_WITH_64_CHAR_SHA256"
+}
