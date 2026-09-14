@@ -26,14 +26,27 @@ def audit_event_chain(manifest_path: str | Path) -> dict:
     duplicate_manifest_ids = sorted({x for x in ids if ids.count(x) > 1})
     invalid_statuses = sorted({row["status"] for row in manifest if row["status"] not in VALID_STATUSES})
     evidence = [root / row["evidence_file"] for row in manifest]
-    missing = [str(path) for path in evidence if not path.is_file()]
+    missing = sorted({str(path) for path in evidence if not path.is_file()})
     if duplicate_manifest_ids or invalid_statuses or missing:
         return {"status": "BLOCKED", "reason": "manifest validation failed", "duplicate_manifest_source_ids": duplicate_manifest_ids, "invalid_statuses": invalid_statuses, "missing_files": missing}
-    rows = load_event_rows(evidence)
+
+    parsed_by_path = {}
+    all_rows = []
+    for path in dict.fromkeys(evidence):
+        parsed = load_event_rows([path])
+        parsed_by_path[path] = parsed
+        all_rows.extend(parsed)
+
+    rows = []
+    for manifest_row in manifest:
+        path = root / manifest_row["evidence_file"]
+        source_id = manifest_row["source_id"]
+        rows.extend(row for row in parsed_by_path[path] if row["source_id"] == source_id)
+
     manifest_effective_dates = {row["source_id"]: row["effective_date"] for row in manifest}
     observed_effective_dates = {source_id: sorted({row["effective_date"] for row in rows if row["source_id"] == source_id}) for source_id in ids}
     date_mismatches = {source_id: {"manifest": manifest_effective_dates[source_id], "observed": observed_effective_dates[source_id]} for source_id in ids if observed_effective_dates[source_id] != [manifest_effective_dates[source_id]]}
-    unknown_sources = sorted(set(row["source_id"] for row in rows) - set(ids))
+    unknown_sources = sorted(set(row["source_id"] for row in all_rows) - set(ids))
     if date_mismatches or unknown_sources:
         return {"status": "BLOCKED", "reason": "event provenance reconciliation failed", "date_mismatches": date_mismatches, "unknown_sources": unknown_sources}
     by_source = Counter(row["source_id"] for row in rows)
