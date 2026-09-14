@@ -27,16 +27,14 @@ class Pipeline:
             raise RuntimeError("Train the pipeline before prediction.")
         data, _ = build_features(raw)
         data = add_market_regime_features(data)
-        day = data[data["date"].astype(str) == str(date)].copy()
-        day = day.dropna(subset=self.features)
+        day = data[data["date"].astype(str) == str(date)].copy().dropna(subset=self.features)
         ranked = self.ranker.score(day).head(self.top_k)
         pred = self.forecaster.predict(ranked)
         pred["rank"] = range(1, len(pred) + 1)
         pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
-        if not day.empty:
-            regime = regime_label(day.iloc[0])
-            pred["market_regime"] = regime
-        else:
-            pred["market_regime"] = "unknown"
-        pred["model_version"] = "adaptive-v1"
+        pred["market_regime"] = regime_label(day.iloc[0]) if not day.empty else "unknown"
+        risk_columns = ["atr_pct_14", "volatility_20", "downside_volatility_20", "volume_ratio_20"]
+        risk_frame = ranked[["symbol", *risk_columns]].copy()
+        pred = pred.merge(risk_frame, on="symbol", how="left", validate="one_to_one")
+        pred["model_version"] = "adaptive-v2"
         return pred
