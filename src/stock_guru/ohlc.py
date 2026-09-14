@@ -25,6 +25,8 @@ class OHLCForecaster:
         self.features: list[str] = []
         self.regime_adjustments: dict[str, dict[str, float]] = {}
         self.regime_adjustment_shrinkage = 0.5
+        self.regime_models: dict[str, dict[str, XGBRegressor]] = {}
+        self.regime_blend = {"bear": 0.25, "high_vol_bear": 0.25}
 
     def _fit_regime_adjustments(self, train: pd.DataFrame) -> None:
         """Learn conservative regime corrections from time-series OOF residuals."""
@@ -32,7 +34,6 @@ class OHLCForecaster:
         train = train.copy().sort_values("date") if "date" in train else train.copy()
         residuals = pd.DataFrame(index=train.index, columns=TARGETS, dtype=float)
         n_splits = min(3, max(0, len(train) // 20))
-
         if n_splits >= 2:
             splitter = TimeSeriesSplit(n_splits=n_splits)
             for fit_idx, valid_idx in splitter.split(train):
@@ -41,9 +42,7 @@ class OHLCForecaster:
                 for target, model in self.models.items():
                     oof_model = clone(model)
                     oof_model.fit(fit[self.features], fit[target])
-                    residuals.loc[valid.index, target] = (
-                        valid[target].to_numpy() - oof_model.predict(valid[self.features])
-                    )
+                    residuals.loc[valid.index, target] = valid[target].to_numpy() - oof_model.predict(valid[self.features])
 
         adjustments: dict[str, dict[str, float]] = {}
         for label in ("bear", "high_vol_bear"):
@@ -51,12 +50,26 @@ class OHLCForecaster:
             if mask.sum() < 10:
                 continue
             adjustments[label] = {
-                target: float(
-                    residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage
-                )
+                target: float(residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage)
                 for target in TARGETS
             }
         self.regime_adjustments = adjustments
+
+    def _fit_regime_models(self, train: pd.DataFrame) -> None:
+        """Fit small specialist models only on adverse-regime training rows."""
+        self.regime_models = {}
+        labels = train.apply(regime_label, axis=1)
+        for label in ("bear", "high_vol_bear"):
+            mask = labels.eq(label)
+            if mask.sum() < 30:
+                continue
+            specialists: dict[str, XGBRegressor] = {}
+            for target, base_model in self.models.items():
+                specialist = clone(base_model)
+                specialist.set_params(n_estimators=max(100, int(base_model.get_params()["n_estimators"] * 0.5)))
+                specialist.fit(train.loc[mask, self.features], train.loc[mask, target])
+                specialists[target] = specialist
+            self.regime_models[label] = specialists
 
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
@@ -65,6 +78,7 @@ class OHLCForecaster:
         for target, model in self.models.items():
             model.fit(train[features], train[target], sample_weight=weights)
         self._fit_regime_adjustments(train)
+        self._fit_regime_models(train)
         return self
 
     @staticmethod
@@ -81,15 +95,23 @@ class OHLCForecaster:
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
         metadata = [c for c in ["date", "symbol", "close", "rank_score"] if c in df.columns]
         out = df[metadata].copy()
+        labels = df.apply(regime_label, axis=1)
         for target, model in self.models.items():
-            out[target.replace("target_", "pred_")] = model.predict(df[self.features])
-
-        if self.regime_adjustments:
-            labels = df.apply(regime_label, axis=1)
-            for label, corrections in self.regime_adjustments.items():
+            base_pred = model.predict(df[self.features])
+            pred = base_pred.copy()
+            target_col = target.replace("target_", "pred_")
+            for label, specialists in self.regime_models.items():
                 mask = labels.eq(label)
-                for target, correction in corrections.items():
-                    out.loc[mask, target.replace("target_", "pred_")] += correction
+                if mask.any():
+                    blend = self.regime_blend.get(label, 0.0)
+                    specialist_pred = specialists[target].predict(df.loc[mask, self.features])
+                    pred[mask.to_numpy()] = (1.0 - blend) * pred[mask.to_numpy()] + blend * specialist_pred
+            out[target_col] = pred
+
+        for label, corrections in self.regime_adjustments.items():
+            mask = labels.eq(label)
+            for target, correction in corrections.items():
+                out.loc[mask, target.replace("target_", "pred_")] += correction
 
         base = out["close"]
         out["pred_open"] = base * (1 + out["pred_open"])
