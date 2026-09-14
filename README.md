@@ -17,7 +17,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 ## Roadmap status
 
-- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, and provenance-bearing baseline/event reconstruction are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
+- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
@@ -28,6 +28,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/data.py`: current NIFTY 500 universe + OHLCV ingestion.
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
+- `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
 - `src/stock_guru/features.py`: leakage-safe technical/fundamental feature engineering.
 - `src/stock_guru/ranker.py`: XGBoost learning-to-rank stock selector.
@@ -77,6 +78,19 @@ PYTHONPATH=src python -m stock_guru.cli universe-history \
 ```
 
 The reconstruction is deliberately conservative: it does not invent membership before the supplied baseline, rejects duplicate symbol/date events, and rejects impossible include/exclude transitions.
+
+## Check universe coverage
+
+After generating snapshots, produce a machine-readable coverage report:
+
+```bash
+PYTHONPATH=src python -m stock_guru.cli universe-quality \
+  --snapshots data/nifty500_snapshots.csv \
+  --events data/nifty500_events.csv \
+  --output artifacts/universe_quality.json
+```
+
+The report records the supplied date span, snapshot count, row count, unique constituents, and inclusion/exclusion counts. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
 
 ## Train
 
