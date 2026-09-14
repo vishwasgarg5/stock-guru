@@ -92,14 +92,19 @@ def run_step3_certification(
     slippage_bps: float = 5.0,
     cost_scenarios_bps: tuple[float, ...] = (0.0, 10.0, 25.0, 50.0),
 ) -> dict[str, Any]:
-    """Run the real PIT Step 3 evaluation, or fail closed before modeling.
-
-    This function never creates substitute history. It requires real prices,
-    PIT fundamentals with publication timestamps, and historical universe
-    intervals. If those inputs are absent or invalid, the returned status is
-    ``blocked`` and no performance claim is produced.
-    """
+    """Run the real PIT Step 3 evaluation, or fail closed before modeling."""
     validation = validate_step3_inputs(prices, fundamentals, universe_intervals)
+    dates = pd.to_datetime(prices["date"], errors="coerce").dt.normalize().nunique()
+    if dates <= min_train_days + 1:
+        return {
+            "status": "blocked",
+            "reason": f"Not enough real historical sessions for walk-forward validation: {dates} <= {min_train_days + 1}",
+            "input_validation": validation,
+            "folds": 0,
+            "portfolio": None,
+            "cost_sensitivity": {},
+        }
+
     folds, prediction_frames = run_walk_forward_with_predictions(
         prices,
         min_train_days=min_train_days,
@@ -120,16 +125,8 @@ def run_step3_certification(
 
     predictions = pd.concat(prediction_frames, ignore_index=True)
     join_audit = validate_pit_join_output(predictions, date_column="prediction_date")
-    portfolio = backtest(
-        predictions,
-        transaction_cost_bps=transaction_cost_bps,
-        slippage_bps=slippage_bps,
-    )
-    sensitivity = cost_sensitivity(
-        predictions,
-        cost_scenarios_bps=cost_scenarios_bps,
-        slippage_bps=slippage_bps,
-    )
+    portfolio = backtest(predictions, transaction_cost_bps=transaction_cost_bps, slippage_bps=slippage_bps)
+    sensitivity = cost_sensitivity(predictions, cost_scenarios_bps=cost_scenarios_bps, slippage_bps=slippage_bps)
     return {
         "status": "complete",
         "input_validation": validation,
