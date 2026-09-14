@@ -94,3 +94,20 @@ class LSTMChallenger:
         self.model.eval()
         with torch.no_grad():
             return self.model(torch.from_numpy(x)).cpu().numpy()
+
+
+def temporal_challenger_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict:
+    """Return dependency-free regression metrics for an evaluated challenger."""
+    y = np.asarray(actual, dtype=np.float64)
+    yh = np.asarray(predicted, dtype=np.float64)
+    if y.ndim != 2 or yh.ndim != 2 or y.shape != yh.shape or y.shape[0] == 0 or y.shape[1] == 0:
+        raise ValueError("actual and predicted must be matching non-empty 2D arrays")
+    if not np.isfinite(y).all() or not np.isfinite(yh).all():
+        raise ValueError("actual and predicted must contain only finite values")
+    error = yh - y
+    return {
+        "samples": int(y.shape[0]),
+        "outputs": int(y.shape[1]),
+        "mae": float(np.mean(np.abs(error))),
+        "rmse": float(np.sqrt(np.mean(error ** 2))),
+    }
