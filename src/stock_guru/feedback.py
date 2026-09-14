@@ -6,7 +6,6 @@ from .evaluation import evaluate
 from .pipeline import Pipeline
 from .ledger import load_pending
 
-
 FEEDBACK_KEY_COLUMNS = ["prediction_date", "symbol", "model_version"]
 
 
@@ -21,7 +20,6 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
         raise ValueError("Predictions must contain date or prediction_date")
     if "symbol" not in p.columns:
         raise ValueError("Predictions must contain symbol")
-
     m = market.copy()
     required = {"date", "symbol", "open", "high", "low", "close"}
     if not required.issubset(m.columns):
@@ -31,8 +29,7 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
     actual = m[["date", "symbol", "open", "high", "low", "close"]].copy()
     actual["prediction_date"] = actual.groupby("symbol")["date"].shift(1)
     actual = actual.dropna(subset=["prediction_date"]).rename(columns={
-        "open": "actual_open", "high": "actual_high",
-        "low": "actual_low", "close": "actual_close",
+        "open": "actual_open", "high": "actual_high", "low": "actual_low", "close": "actual_close",
     })
     if "date" in p.columns:
         p = p.rename(columns={"date": "prediction_date"})
@@ -41,6 +38,8 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
         labeled["base_close"] = labeled["close"]
     if "base_close" not in labeled.columns:
         raise ValueError("Predictions must contain base_close or close")
+    if "pred_close" not in labeled.columns:
+        raise ValueError("Predictions must contain pred_close")
     labeled["prediction_date"] = pd.to_datetime(labeled["prediction_date"]).dt.normalize()
     labeled["actual_return"] = labeled["actual_close"] / labeled["base_close"] - 1.0
     labeled["predicted_return"] = labeled["pred_close"] / labeled["base_close"] - 1.0
@@ -85,7 +84,7 @@ def append_feedback(store: str, labeled: pd.DataFrame) -> None:
 def settle_prediction_feedback(prediction_store: str, feedback_store: str, market: pd.DataFrame,
                                 as_of: str | None = None) -> pd.DataFrame:
     """Label pending ledger rows whose next market session is now available."""
-    pending = load_pending(prediction_store, as_of=as_of)
+    pending = load_pending(prediction_store, as_of=as_of, settled_store=feedback_store)
     if pending.empty:
         return pending
     labeled = label_predictions(pending, market)
