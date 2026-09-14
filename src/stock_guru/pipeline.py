@@ -6,6 +6,7 @@ from .features import build_features
 from .ranker import StockRanker
 from .ohlc import OHLCForecaster
 from .regime import confidence_from_rank, regime_label
+from .universe_history import apply_point_in_time_universe
 
 
 @dataclass
@@ -15,12 +16,23 @@ class Pipeline:
     forecaster: OHLCForecaster | None = None
     features: list[str] | None = None
 
+    @staticmethod
+    def _prepare(
+        raw: pd.DataFrame,
+        universe_intervals: pd.DataFrame | None,
+    ) -> pd.DataFrame:
+        if universe_intervals is None:
+            return raw.copy()
+        return apply_point_in_time_universe(raw, universe_intervals)
+
     def train(
         self,
         raw: pd.DataFrame,
         fundamentals: pd.DataFrame | None = None,
+        universe_intervals: pd.DataFrame | None = None,
     ) -> "Pipeline":
-        data, features = build_features(raw, fundamentals)
+        prepared = self._prepare(raw, universe_intervals)
+        data, features = build_features(prepared, fundamentals)
         self.features = features
         self.ranker = StockRanker().fit(data, features)
         self.forecaster = OHLCForecaster().fit(data, features)
@@ -31,10 +43,12 @@ class Pipeline:
         raw: pd.DataFrame,
         date: str,
         fundamentals: pd.DataFrame | None = None,
+        universe_intervals: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         if not self.ranker or not self.forecaster or self.features is None:
             raise RuntimeError("Train the pipeline before prediction.")
-        data, _ = build_features(raw, fundamentals)
+        prepared = self._prepare(raw, universe_intervals)
+        data, _ = build_features(prepared, fundamentals)
         day = data[data["date"].astype(str) == str(date)].copy().dropna(subset=self.features)
         ranked = self.ranker.score(day).head(self.top_k)
         pred = self.forecaster.predict(ranked)
