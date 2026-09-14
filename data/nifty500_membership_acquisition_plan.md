@@ -1,19 +1,27 @@
-# NIFTY 500 Historical Membership Acquisition
+# NIFTY 500 Historical Membership — Free Public Evidence Plan
+
+## Objective
+
+Keep Stock Guru independent of paid historical constituent-data subscriptions. The core PIT universe pipeline must work from publicly obtainable primary NSE/NIFTY Indices evidence.
 
 ## Certification rule
 
-Do not treat a reconstructed or inferred membership history as authoritative certification evidence. Historical membership must be backed by primary NSE/NSE Indices evidence or a licensed historical constituent-data product whose provenance can be verified.
+Do not treat a reconstructed or inferred membership history as authoritative by itself. However, membership intervals may be marked `EVENT_DERIVED` when they are deterministically reconstructed from an authoritative public snapshot plus a complete chain of verified primary NSE/NIFTY Indices membership events.
 
-## Discovered evidence
+Secondary reconstructions are `CROSS_CHECK_ONLY`: they may identify discrepancies or missing releases but can never fill a gap.
 
-1. NSE/Nifty Indices publishes the current NIFTY 500 constituent CSV, but the public index page exposes the current snapshot only.
-2. NSE Indices explicitly states that its data products include ongoing and historical index constituent data and that historical constituent data is available through subscription.
-3. Official NIFTY 500 press releases provide primary inclusion/exclusion events and are already logged in `data/nifty500_historical_source_log.csv`.
-4. A secondary open-source reconstruction (`aditya-jha/nse-historical-membership`) provides NIFTY 500 point-in-time intervals from public NSE publications. It is suitable for discovery and cross-checking, not as sole certification evidence.
+## Public evidence already available
 
-## Acquisition target
+1. NSE/Nifty Indices publishes the current NIFTY 500 constituent CSV.
+2. Official NIFTY 500/NIFTY Indices press releases provide primary inclusion/exclusion events and are logged in `data/nifty500_historical_source_log.csv`.
+3. The repository contains event-level evidence files and validation targets for the verified releases.
+4. Public secondary reconstructions can be used for cross-checking only.
 
-Obtain a licensed/authoritative historical NIFTY 500 constituent export covering the backtest start date through the current certification date, preferably with one snapshot per effective review date and source identifiers.
+## Free reconstruction target
+
+Build a point-in-time membership history from:
+
+`public current snapshot -> verified primary events -> deterministic membership intervals`
 
 Required fields:
 
@@ -21,26 +29,33 @@ Required fields:
 - `symbol`
 - `source`
 - `source_id`
+- `evidence_tier`
 
 Required provenance:
 
 - provider/publisher
 - retrieval date
-- terms/license
 - original source identifier or URL
-- file SHA-256
+- source SHA-256 where the source bytes are locally captured
 - coverage dates
 
 ## Acceptance checks
 
 - exactly one row per `(as_of, symbol)`
-- expected NIFTY 500 cardinality for each complete snapshot
+- deterministic state transitions
+- every transition references a verified primary source ID
 - no inferred members
 - no fabricated dates
-- every snapshot has provenance
-- snapshot transitions reconcile with the primary event ledger
-- gaps are explicitly reported and remain BLOCKED until resolved
+- no silent carry-forward across an unsupported evidence gap
+- secondary datasets never fill missing primary evidence
+- gaps are explicitly reported
+- unsupported dates remain `BLOCKED`
+- complete public event-derived intervals may be marked `EVENT_DERIVED`
+
+## Cost policy
+
+A paid NSE historical constituent subscription is optional for independent comparison only. It must never be required by the core model, tests, backtests, or certification pipeline.
 
 ## Current status
 
-BLOCKED — no authoritative historical full-membership snapshot dataset has yet been acquired. Existing event evidence and secondary reconstruction must not be promoted to primary certification evidence.
+IMPLEMENTATION PATH: FREE_PUBLIC_EVIDENCE. Historical periods remain `BLOCKED` until their public primary event chain is complete; no paid dataset is required to proceed with the reconstruction work.
