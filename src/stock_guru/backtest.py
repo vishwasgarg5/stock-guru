@@ -28,16 +28,20 @@ def _regime_portfolio_metrics(curve: pd.DataFrame) -> dict:
 
 
 def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
-             benchmark: pd.DataFrame | None = None, initial_capital: float = 1.0) -> dict:
+             benchmark: pd.DataFrame | None = None, initial_capital: float = 1.0,
+             slippage_bps: float = 0.0) -> dict:
     """Backtest daily risk-approved positions using next-session close returns.
 
-    Predictions must represent decisions made before the next trading session and
-    contain prediction_date, symbol, position_weight, trade, base_close, actual_close.
+    ``transaction_cost_bps`` models explicit fees/taxes. ``slippage_bps`` is a
+    separate execution-friction assumption applied to turnover, allowing the
+    backtest to stress realistic fills without changing the fee assumption.
     """
     required = {"prediction_date", "symbol", "position_weight", "trade", "base_close", "actual_close"}
     missing = required - set(predictions.columns)
     if missing:
         raise ValueError(f"Missing backtest columns: {sorted(missing)}")
+    if transaction_cost_bps < 0 or slippage_bps < 0:
+        raise ValueError("transaction_cost_bps and slippage_bps must be non-negative")
 
     p = predictions.copy()
     p["prediction_date"] = pd.to_datetime(p["prediction_date"]).dt.normalize()
@@ -47,18 +51,22 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
 
     daily = []
     previous = {}
-    cost = transaction_cost_bps / 10000.0
+    fee_rate = transaction_cost_bps / 10000.0
+    slippage_rate = slippage_bps / 10000.0
     for date, g in p.groupby("prediction_date", sort=True):
         current = dict(zip(g["symbol"], g["position_weight"]))
         symbols = set(previous) | set(current)
         turnover = sum(abs(current.get(s, 0.0) - previous.get(s, 0.0)) for s in symbols)
         gross = float((g["position_weight"] * g["gross_return"]).sum())
-        net = gross - turnover * cost
+        transaction_cost = turnover * fee_rate
+        slippage_cost = turnover * slippage_rate
+        net = gross - transaction_cost - slippage_cost
         regime = "unknown"
         if "market_regime" in g.columns and g["market_regime"].notna().any():
             regime = str(g["market_regime"].dropna().iloc[0])
         daily.append({"date": date, "gross_return": gross, "turnover": turnover,
-                      "transaction_cost": turnover * cost, "net_return": net,
+                      "transaction_cost": transaction_cost, "slippage_cost": slippage_cost,
+                      "execution_cost": transaction_cost + slippage_cost, "net_return": net,
                       "market_regime": regime})
         previous = current
 
@@ -85,6 +93,8 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
         "win_rate": float((returns > 0).mean()),
         "average_turnover": float(curve["turnover"].mean()),
         "total_transaction_cost": float(curve["transaction_cost"].sum()),
+        "total_slippage_cost": float(curve["slippage_cost"].sum()),
+        "total_execution_cost": float(curve["execution_cost"].sum()),
         "trading_days_with_positive_return": int((returns > 0).sum()),
         "regime_metrics": _regime_portfolio_metrics(curve),
     }
@@ -103,11 +113,12 @@ def backtest(predictions: pd.DataFrame, transaction_cost_bps: float = 10.0,
     return result
 
 
-def cost_sensitivity(predictions: pd.DataFrame, cost_scenarios_bps=(0.0, 10.0, 25.0, 50.0)) -> dict:
-    """Evaluate the same OOS trades under multiple transaction-cost assumptions."""
+def cost_sensitivity(predictions: pd.DataFrame, cost_scenarios_bps=(0.0, 10.0, 25.0, 50.0),
+                     slippage_bps: float = 0.0) -> dict:
+    """Evaluate the same OOS trades under multiple fee assumptions and fixed slippage."""
     result = {}
     for bps in cost_scenarios_bps:
         result[str(float(bps)).rstrip("0").rstrip(".")] = backtest(
-            predictions, transaction_cost_bps=float(bps)
+            predictions, transaction_cost_bps=float(bps), slippage_bps=slippage_bps
         )
     return result
