@@ -17,22 +17,22 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 ## Roadmap status
 
-- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Coverage validation rejects invalid dates, blank provenance, unsupported actions, and duplicate symbol/date events. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
+- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, coverage-quality reporting, interval integrity checks, and source-gap diagnostics are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
-- **Steps 29–38 — PIT/data-quality hardening:** a reusable point-in-time fundamentals as-of join is available; feature construction and the model pipeline can consume PIT fundamentals and optional PIT universe intervals; fundamental values are validated for numeric/finite content; market feature inputs reject malformed or duplicate symbol/date observations; OHLC training/prediction fails closed on empty usable data; regression tests cover the new guards.
-- **Steps 39–43 — PIT universe ingestion hardening:** normalized snapshot/event validators, provenance-bearing templates, source manifests, source-bundle audit validation, a CLI validation command, and provenance-aware coverage reporting are now in place. These changes prepare the repository for importing real historical NIFTY 500 evidence without fabricating missing history.
-- **Step 44 onward:** connect a verified historical membership source and populate actual dated snapshots/events; then run completeness and survivorship-bias validation before enabling historical performance claims.
+- **Steps 29–43 — PIT/data-quality hardening:** strict PIT fundamentals joining, optional PIT universe filtering, numeric/finite fundamental validation, market-input guards, OHLC fail-closed behavior, source manifests, provenance-aware coverage, and regression protection are implemented.
+- **Steps 44–53 — PIT research integration:** walk-forward and strategy backtests consume optional PIT fundamentals/universe intervals; CLI train/predict/backtest accept those datasets; empty PIT universes fail closed; interval overlaps are rejected; source snapshot gaps are reported; and PIT regression tests are in CI.
+- **Step 54 onward:** import verified historical NIFTY 500 evidence, run source fingerprint/coverage audits, populate dated snapshots/events, connect real filing-derived fundamentals, and only then publish survivorship-bias-free historical performance claims.
 
 ## Design
 
 - `src/stock_guru/data.py`: current NIFTY 500 universe + OHLCV ingestion.
-- `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
+- `src/stock_guru/universe_history.py`: point-in-time constituent snapshots, interval validation, and membership filtering.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/universe_ingest.py`: normalization and validation for PIT universe snapshots/events.
-- `src/stock_guru/universe_source.py`: provenance manifest and historical-source bundle validation.
+- `src/stock_guru/universe_source.py`: provenance manifest, source validation, and snapshot gap diagnostics.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
@@ -42,7 +42,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/ohlc.py`: four XGBoost regressors for normalized next-day OHLC returns.
 - `src/stock_guru/evaluation.py`: error metrics and prediction labeling.
 - `src/stock_guru/pipeline.py`: train/predict orchestration with optional PIT fundamentals and universe filtering.
-- `src/stock_guru/walk_forward.py`: expanding-window validation.
+- `src/stock_guru/walk_forward.py`: expanding-window PIT-aware validation.
 - `src/stock_guru/retrainer.py`: validation-gated model replacement and labeled prediction storage.
 - `src/stock_guru/feedback.py`: next-session prediction settlement and feedback labeling.
 - `src/stock_guru/paper_trading.py`: paper execution with costs and position limits.
@@ -61,34 +61,7 @@ Never use a fundamental value before its public availability date. The strict PI
 
 Market data must have at most one row per `date`/`symbol`; malformed dates, blank symbols, or missing OHLCV columns are rejected during feature construction.
 
-PIT universe snapshots must contain `as_of` and `symbol`. Event imports must additionally contain `effective_date`, `action`, `source`, and `source_id`. Symbols and actions are normalized, dates are normalized, duplicates are rejected, and event actions are limited to `include`/`exclude`.
-
-## Install
-
-```bash
-pip install -r requirements.txt
-```
-
-## Download a bootstrap dataset
-
-```bash
-PYTHONPATH=src python -c "from stock_guru.data import download_nifty500_prices; download_nifty500_prices(start='2018-01-01')"
-```
-
-This writes `data/prices.csv` and `data/nifty500_universe.csv`. The downloader uses the current constituent list, so this dataset is suitable for pipeline development but **not** a fully unbiased historical NIFTY 500 backtest.
-
-## Build a point-in-time universe history
-
-Supply an authoritative one-date baseline and a provenance-bearing event CSV. Events must contain `effective_date`, `symbol`, `action` (`include` or `exclude`), `source`, and `source_id`.
-
-```bash
-PYTHONPATH=src python -m stock_guru.cli universe-history \
-  --baseline data/nifty500_baseline.csv \
-  --events data/nifty500_events.csv \
-  --output data/nifty500_universe_history.csv
-```
-
-The reconstruction is deliberately conservative: it does not invent membership before the supplied baseline, rejects duplicate symbol/date events, and rejects impossible include/exclude transitions.
+PIT universe snapshots must contain `as_of` and `symbol`. Event imports must additionally contain `effective_date`, `action`, `source`, and `source_id`. Symbols and actions are normalized, dates are normalized, duplicates are rejected, and event actions are limited to `include`/`exclude`. Generated membership intervals must not overlap for the same symbol.
 
 ## Validate a historical source before ingestion
 
@@ -97,10 +70,11 @@ Every real historical snapshot dataset should be accompanied by a provenance man
 ```bash
 PYTHONPATH=src python -m stock_guru.cli universe-source-validate \
   --snapshots data/nifty500_snapshots.csv \
-  --manifest data/nifty500_source_manifest.json
+  --manifest data/nifty500_source_manifest.json \
+  --gap-threshold-days 180
 ```
 
-The validator normalizes symbols and dates, rejects duplicate observations, and reports the observed snapshot span and constituent-count range. It never fills missing constituents. If a source contract explicitly guarantees a fixed snapshot size, add `--expected-constituents N --require-full-snapshot-size`; otherwise source-specific counts are allowed.
+The validator normalizes symbols and dates, rejects duplicate observations, reports the observed snapshot span and constituent-count range, and surfaces long gaps without filling them. If a source contract explicitly guarantees a fixed snapshot size, add `--expected-constituents N --require-full-snapshot-size`; otherwise source-specific counts are allowed.
 
 ## Check universe coverage
 
@@ -116,25 +90,23 @@ PYTHONPATH=src python -m stock_guru.cli universe-quality \
 
 The report records the supplied snapshot span, snapshot counts, unique constituents, event counts, event span, event provenance completeness, and source provenance. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
 
-## Train
+## Train / predict / backtest with PIT data
 
 ```bash
-PYTHONPATH=src python -m stock_guru.cli train --prices data/prices.csv --model-dir artifacts
+PYTHONPATH=src python -m stock_guru.cli train \
+  --prices data/prices.csv \
+  --fundamentals data/fundamentals.csv \
+  --universe data/nifty500_universe_history.csv \
+  --model-dir artifacts
+
+PYTHONPATH=src python -m stock_guru.cli backtest \
+  --prices data/prices.csv \
+  --fundamentals data/fundamentals.csv \
+  --universe data/nifty500_universe_history.csv \
+  --output-dir artifacts/backtest
 ```
 
-## Predict
-
-```bash
-PYTHONPATH=src python -m stock_guru.cli predict --prices data/prices.csv --model-dir artifacts --date 2026-01-02
-```
-
-## Walk-forward research
-
-Use `stock_guru.walk_forward.run_walk_forward()` with an expanding training window. Do not use random train/test splits for this time-series problem.
-
-## Paper trading
-
-`stock_guru.paper_trading.execute_signals()` consumes accepted prediction signals and enters at the first subsequent session open, applying configured slippage, commission, and position caps. Use `save_trades()` for idempotent persistence.
+The walk-forward path applies the same PIT universe and fundamental inputs to training and prediction folds. An empty eligible universe fails closed rather than silently producing an unrestricted result.
 
 ## Important research limitation
 
