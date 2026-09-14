@@ -22,7 +22,9 @@ def test_join_uses_latest_fundamental_available_on_or_before_price_date():
     assert pd.isna(out.loc[out["date"] == "2024-01-10", "roe"]).all()
     assert out.loc[out["date"] == "2024-02-10", "roe"].iloc[0] == 10.0
     assert out.loc[out["date"] == "2024-03-10", "roe"].iloc[0] == 20.0
-    assert out["_pit_available_date"].dt.strftime("%Y-%m-%d").tolist() == [None, "2024-01-20", "2024-02-20"]
+    available = out["_pit_available_date"].dt.strftime("%Y-%m-%d")
+    assert pd.isna(available.iloc[0])
+    assert available.iloc[1:].tolist() == ["2024-01-20", "2024-02-20"]
 
 
 def test_join_rejects_invalid_price_dates():
