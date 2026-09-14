@@ -80,6 +80,13 @@ def main() -> None:
     us.add_argument("--expected-constituents", type=int, default=None)
     us.add_argument("--require-full-snapshot-size", action="store_true")
     us.add_argument("--gap-threshold-days", type=int, default=None)
+    ua = sub.add_parser("universe-audit", help="Fingerprint and audit a validated historical universe source")
+    ua.add_argument("--snapshots", required=True)
+    ua.add_argument("--manifest", required=True)
+    ua.add_argument("--expected-constituents", type=int, default=None)
+    ua.add_argument("--require-full-snapshot-size", action="store_true")
+    ua.add_argument("--gap-threshold-days", type=int, default=None)
+    ua.add_argument("--output", default="artifacts/universe_source_audit.json")
     args = parser.parse_args()
 
     if args.command == "download":
@@ -161,6 +168,11 @@ def main() -> None:
         from .universe_source import validate_source_bundle
         report = validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days)
         print(json.dumps(report, indent=2))
+    elif args.command == "universe-audit":
+        from .universe_audit import build_source_audit, save_source_audit
+        report = build_source_audit(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days)
+        output = save_source_audit(report, args.output)
+        print(output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__": main()
