@@ -76,3 +76,14 @@ def test_low_forecast_confidence_is_rejected():
     out = final_trade_decision(pd.DataFrame([_base(symbol="AAA", forecast_confidence=0.40)]))
     assert out.iloc[0]["decision"] == "NO_TRADE"
     assert "forecast_confidence" in out.iloc[0]["risk_reason"]
+
+
+def test_lower_forecast_confidence_reduces_position_weight():
+    rows = [
+        _base(symbol="HIGH", forecast_confidence=0.90),
+        _base(symbol="LOW", forecast_confidence=0.60),
+    ]
+    out = final_trade_decision(pd.DataFrame(rows), RiskConfig(max_total_exposure_pct=1.0))
+    high = out.loc[out["symbol"] == "HIGH", "position_weight"].iloc[0]
+    low = out.loc[out["symbol"] == "LOW", "position_weight"].iloc[0]
+    assert high > low
