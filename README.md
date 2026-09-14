@@ -17,11 +17,12 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 ## Roadmap status
 
-- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Coverage validation now rejects invalid dates, blank provenance, unsupported actions, and duplicate symbol/date events. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
+- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Coverage validation rejects invalid dates, blank provenance, unsupported actions, and duplicate symbol/date events. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
+- **Steps 29–38 — PIT/data-quality hardening:** a reusable point-in-time fundamentals as-of join is available; feature construction and the model pipeline can consume PIT fundamentals and optional PIT universe intervals; fundamental values are validated for numeric/finite content; market feature inputs reject malformed or duplicate symbol/date observations; OHLC training/prediction fails closed on empty usable data; regression tests cover the new guards. These steps improve research safety but do not claim that the underlying historical constituent or filing data are complete.
 
 ## Design
 
@@ -29,12 +30,14 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
+- `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
+- `src/stock_guru/pit.py`: strict point-in-time fundamentals as-of join used by feature construction.
 - `src/stock_guru/features.py`: leakage-safe technical/fundamental feature engineering.
 - `src/stock_guru/ranker.py`: XGBoost learning-to-rank stock selector.
 - `src/stock_guru/ohlc.py`: four XGBoost regressors for normalized next-day OHLC returns.
 - `src/stock_guru/evaluation.py`: error metrics and prediction labeling.
-- `src/stock_guru/pipeline.py`: train/predict orchestration.
+- `src/stock_guru/pipeline.py`: train/predict orchestration with optional PIT fundamentals and universe filtering.
 - `src/stock_guru/walk_forward.py`: expanding-window validation.
 - `src/stock_guru/retrainer.py`: validation-gated model replacement and labeled prediction storage.
 - `src/stock_guru/feedback.py`: next-session prediction settlement and feedback labeling.
@@ -50,7 +53,9 @@ The modeling input must contain at least:
 - `date`, `symbol`, `open`, `high`, `low`, `close`, `volume`
 - optional point-in-time fundamental columns: `roe`, `roce`, `eps_growth`, `revenue_growth`, `pe`, `pb`, `debt_to_equity`, `operating_margin`, `free_cash_flow`
 
-Never use a fundamental value before its public availability date. This project treats leakage prevention as a first-class requirement.
+Never use a fundamental value before its public availability date. The strict PIT join in `stock_guru.pit` uses `available_date` as the eligibility boundary and never substitutes a period-end or report date for availability.
+
+Market data must have at most one row per `date`/`symbol`; malformed dates, blank symbols, or missing OHLCV columns are rejected during feature construction.
 
 ## Install
 
