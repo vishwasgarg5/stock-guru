@@ -25,11 +25,9 @@ def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
     score_col = "rank_score" if "rank_score" in predictions.columns else None
     if score_col is None and "rank" not in predictions.columns:
         return {}
-
     p = predictions.copy()
     p["actual_return"] = p["actual_close"] / p["base_close"] - 1.0
     groups = p.groupby("prediction_date", sort=False) if "prediction_date" in p.columns else [("all", p)]
-
     precisions, top_returns, universe_returns, excess, ndcgs = [], [], [], [], []
     for _, g in groups:
         g = g.dropna(subset=["actual_return"])
@@ -47,15 +45,27 @@ def ranking_metrics(predictions: pd.DataFrame, k: int = 10) -> dict:
         relevance = relevance - relevance.min() + 1e-12
         scores = ordered[score_col].to_numpy() if score_col else -ordered["rank"].to_numpy()
         ndcgs.append(_ndcg(scores, relevance, k))
-
     if not precisions:
         return {}
+    return {"precision_at_k": float(np.mean(precisions)), "top_k_mean_return": float(np.mean(top_returns)), "universe_mean_return": float(np.mean(universe_returns)), "top_k_excess_return": float(np.mean(excess)), "ndcg_at_k": float(np.mean(ndcgs))}
+
+
+def _uncertainty_metrics(predictions: pd.DataFrame) -> dict:
+    """Measure whether close uncertainty estimates contain realized close errors."""
+    required = {"actual_close", "pred_close", "base_close", "pred_close_uncertainty_pct"}
+    if not required.issubset(predictions.columns):
+        return {}
+    p = predictions.dropna(subset=list(required)).copy()
+    if p.empty:
+        return {}
+    width = p["base_close"].abs() * p["pred_close_uncertainty_pct"].clip(lower=0.0)
+    error = (p["actual_close"] - p["pred_close"]).abs()
+    covered = error <= width
     return {
-        "precision_at_k": float(np.mean(precisions)),
-        "top_k_mean_return": float(np.mean(top_returns)),
-        "universe_mean_return": float(np.mean(universe_returns)),
-        "top_k_excess_return": float(np.mean(excess)),
-        "ndcg_at_k": float(np.mean(ndcgs)),
+        "close_interval_coverage": float(covered.mean()),
+        "close_uncertainty_mae": float(p["pred_close_uncertainty_pct"].mean()),
+        "close_error_mean_pct": float((error / p["base_close"].abs().replace(0, np.nan)).mean()),
+        "uncertainty_samples": int(len(p)),
     }
 
 
@@ -74,11 +84,10 @@ def _grouped_forecast_metrics(predictions: pd.DataFrame) -> dict:
             yh = group[p].astype(float)
             metrics[f"{p}_mae"] = float(mean_absolute_error(y, yh))
             metrics[f"{p}_rmse"] = float(np.sqrt(mean_squared_error(y, yh)))
-        metrics["close_direction_accuracy"] = float(
-            np.mean(np.sign(group["pred_close"] - group["base_close"]) ==
-                    np.sign(group["actual_close"] - group["base_close"]))
-        )
+        metrics["close_direction_accuracy"] = float(np.mean(np.sign(group["pred_close"] - group["base_close"]) == np.sign(group["actual_close"] - group["base_close"])))
         metrics["samples"] = int(len(group))
+        uncertainty = _uncertainty_metrics(group)
+        metrics.update(uncertainty)
         rows[label] = metrics
     return rows
 
@@ -91,11 +100,9 @@ def evaluate(predictions: pd.DataFrame) -> dict:
         result[f"{p}_mae"] = float(mean_absolute_error(y, yh))
         result[f"{p}_rmse"] = float(np.sqrt(mean_squared_error(y, yh)))
         result[f"{p}_mape_pct"] = float(np.mean(np.abs((y - yh) / y.replace(0, np.nan))) * 100)
-    result["close_direction_accuracy"] = float(
-        np.mean(np.sign(predictions["pred_close"] - predictions["base_close"]) ==
-                np.sign(predictions["actual_close"] - predictions["base_close"]))
-    )
+    result["close_direction_accuracy"] = float(np.mean(np.sign(predictions["pred_close"] - predictions["base_close"]) == np.sign(predictions["actual_close"] - predictions["base_close"])))
     result.update(ranking_metrics(predictions))
+    result.update(_uncertainty_metrics(predictions))
     regime_metrics = _grouped_forecast_metrics(predictions)
     if regime_metrics:
         result["regime_metrics"] = regime_metrics
