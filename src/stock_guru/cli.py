@@ -76,6 +76,18 @@ def main() -> None:
     ea = sub.add_parser("event-audit", help="Audit provenance, completeness gates, and duplicate protection for the historical event chain")
     ea.add_argument("--manifest", default="data/nifty500_event_chain_manifest.csv")
     ea.add_argument("--output", default="artifacts/event_chain_audit.json")
+    sm = sub.add_parser("production-smoke", help="Run deterministic production safety smoke checks")
+    sm.add_argument("--model-dir", default=None)
+    sm.add_argument("--event-manifest", default=None)
+    sm.add_argument("--output", default=None)
+    rr = sub.add_parser("readiness-report", help="Write the conservative final production-readiness report")
+    rr.add_argument("--evidence", required=True, help="JSON object containing the final-readiness boolean inputs")
+    rr.add_argument("--output", default="artifacts/final_readiness.json")
+    cert = sub.add_parser("certify", help="Run smoke checks and emit READY/BLOCKED certification")
+    cert.add_argument("--evidence", required=True, help="JSON object containing the final-readiness boolean inputs")
+    cert.add_argument("--model-dir", default=None)
+    cert.add_argument("--event-manifest", default=None)
+    cert.add_argument("--output", default="artifacts/certification.json")
     args = parser.parse_args()
 
     if args.command == "download":
@@ -91,14 +103,14 @@ def main() -> None:
     elif args.command == "feedback":
         from .feedback import label_predictions, append_feedback
         from .model_selection import summarize_feedback
-        predictions = pd.read_csv(args.predictions); predictions["date"] = pd.to_datetime(predictions["date"] if "date" in predictions.columns else predictions["prediction_date"]); market = load(args.prices); labeled = label_predictions(predictions, market); 
+        predictions = pd.read_csv(args.predictions); predictions["date"] = pd.to_datetime(predictions["date"] if "date" in predictions.columns else predictions["prediction_date"]); market = load(args.prices); labeled = label_predictions(predictions, market)
         if labeled.empty: raise RuntimeError("No next-day actuals matched the stored predictions")
         append_feedback(args.output, labeled); metrics = {"current_batch": evaluate(labeled), "cumulative": summarize_feedback(pd.read_csv(args.output), min_rows=1)}; Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True); Path(args.metrics_output).write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8"); print(metrics)
     elif args.command == "retrain":
         from .model_selection import evaluate_candidate, should_promote, save_metrics, summarize_feedback
-        data = load(args.prices); model_dir = Path(args.model_dir); candidate_metrics = evaluate_candidate(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k); feedback_summary = summarize_feedback(pd.read_csv(args.feedback)) if args.feedback and Path(args.feedback).exists() else None; metrics_path = model_dir / "walk_forward_metrics.json"; old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None; accepted = should_promote(old_metrics, candidate_metrics, feedback=feedback_summary); decision = {"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics, "feedback": feedback_summary};
+        data = load(args.prices); model_dir = Path(args.model_dir); candidate_metrics = evaluate_candidate(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k); feedback_summary = summarize_feedback(pd.read_csv(args.feedback)) if args.feedback and Path(args.feedback).exists() else None; metrics_path = model_dir / "walk_forward_metrics.json"; old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None; accepted = should_promote(old_metrics, candidate_metrics, feedback=feedback_summary); decision = {"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics, "feedback": feedback_summary}
         if accepted:
-            cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max(); training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy();
+            cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max(); training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy()
             if training.empty: raise ValueError("No historical sessions remain before the retraining prediction date")
             final_pipe = Pipeline(top_k=args.top_k).train(training); save_model(final_pipe, args.model_dir, trained_through=training["date"].max(), validation_metrics=candidate_metrics); save_metrics(args.model_dir, candidate_metrics); decision["trained_through"] = str(training["date"].max().date())
         else: decision["reason"] = "candidate rejected; existing model retained"
@@ -125,6 +137,22 @@ def main() -> None:
     elif args.command == "universe-audit":
         from .universe_audit import build_source_audit, save_source_audit
         report = build_source_audit(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days); output = save_source_audit(report, args.output); print(output.read_text(encoding="utf-8"))
+    elif args.command == "production-smoke":
+        from .production_smoke import run_production_smoke
+        report = run_production_smoke(model_dir=args.model_dir, event_manifest=args.event_manifest)
+        if args.output:
+            output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(json.dumps(report, indent=2))
+    elif args.command in {"readiness-report", "certify"}:
+        from .final_readiness import build_final_readiness_report
+        evidence = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
+        report = build_final_readiness_report(**evidence)
+        if args.command == "certify":
+            from .production_smoke import run_production_smoke
+            smoke = run_production_smoke(model_dir=args.model_dir, event_manifest=args.event_manifest)
+            report["smoke"] = smoke
+            report["certification"] = "READY" if report["status"] == "ready" and smoke["status"] == "PASS" else "BLOCKED"
+        output = Path(args.output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(report, indent=2), encoding="utf-8"); print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__": main()
