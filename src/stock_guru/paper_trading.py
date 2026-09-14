@@ -13,6 +13,36 @@ class PaperConfig:
     slippage_bps: float = 5.0
 
 
+@dataclass
+class PaperPortfolio:
+    """Reusable state for a sequential paper-trading portfolio."""
+
+    cash: float
+    equity: float
+
+    @classmethod
+    def from_config(cls, config: PaperConfig) -> "PaperPortfolio":
+        if config.initial_capital <= 0:
+            raise ValueError("initial_capital must be positive")
+        return cls(float(config.initial_capital), float(config.initial_capital))
+
+    def mark_to_market(self, positions: pd.DataFrame, prices: pd.DataFrame) -> float:
+        """Mark open positions at current close and update total equity."""
+        if positions.empty:
+            self.equity = self.cash
+            return self.equity
+        if not {"symbol", "quantity"}.issubset(positions.columns):
+            raise ValueError("positions need symbol and quantity")
+        if not {"symbol", "close"}.issubset(prices.columns):
+            raise ValueError("prices need symbol and close")
+        marks = prices[["symbol", "close"]].drop_duplicates("symbol")
+        merged = positions[["symbol", "quantity"]].merge(marks, on="symbol", how="left")
+        if merged["close"].isna().any():
+            raise ValueError("Missing close price for open position")
+        self.equity = self.cash + float((merged["quantity"] * merged["close"]).sum())
+        return self.equity
+
+
 def execute_signals(
     signals: pd.DataFrame,
     prices: pd.DataFrame,
@@ -21,8 +51,8 @@ def execute_signals(
 ) -> pd.DataFrame:
     """Execute accepted signals at the next session open and close that day.
 
-    The engine is cash-aware: each prediction date shares a common cash budget,
-    rejects allocations that exceed available cash, and records end-of-day equity.
+    Each prediction date shares a common cash budget. ``PaperPortfolio`` is
+    available for callers that need positions and equity to persist across days.
     """
     cfg = config or PaperConfig()
     starting_cash = cfg.initial_capital if capital is None else float(capital)
@@ -53,8 +83,8 @@ def execute_signals(
         raise ValueError("Prices contain duplicate date/symbol rows")
     for col in ["open", "close"]:
         p[col] = pd.to_numeric(p[col], errors="coerce")
-    if (p[["open", "close"]] <= 0).any().any():
-        raise ValueError("Prices must be positive")
+    if p[["open", "close"]].isna().any().any() or (p[["open", "close"]] <= 0).any().any():
+        raise ValueError("Prices must be positive numbers")
 
     s = signals.copy()
     s["prediction_date"] = pd.to_datetime(s["prediction_date"], errors="coerce").dt.normalize()
@@ -87,40 +117,33 @@ def execute_signals(
     out["equity_after"] = starting_cash
 
     cash = starting_cash
-    for prediction_date, idx in out.groupby("prediction_date", sort=True).groups.items():
-        day = out.loc[idx].copy()
-        # Budget is shared across all signals generated for the same prediction date.
-        requested = (day["requested_allocation_pct"] * cash).clip(lower=0)
+    for _, idx in out.groupby("prediction_date", sort=True).groups.items():
+        day = out.loc[idx]
+        requested = day["requested_allocation_pct"] * cash
         total_requested = float(requested.sum())
         scale = min(1.0, cash / total_requested) if total_requested > 0 else 0.0
-        allocated = requested * scale
-        for row_idx, budget in allocated.items():
+        for row_idx, budget in (requested * scale).items():
             entry = float(out.at[row_idx, "entry_price"])
-            qty = int(budget // entry) if pd.notna(entry) and entry > 0 else 0
+            exit_price = float(out.at[row_idx, "exit_price"])
+            qty = int(float(budget) // entry) if pd.notna(entry) and entry > 0 else 0
             entry_value = qty * entry
             entry_cost = entry_value * cfg.commission_bps / 10_000
-            exit_price = float(out.at[row_idx, "exit_price"])
-            exit_value = qty * exit_price
-            exit_cost = exit_value * cfg.commission_bps / 10_000
-            total_debit = entry_value + entry_cost
-            if total_debit > cash and qty > 0:
+            if entry_value + entry_cost > cash and qty:
                 qty = int(cash // (entry * (1 + cfg.commission_bps / 10_000)))
                 entry_value = qty * entry
                 entry_cost = entry_value * cfg.commission_bps / 10_000
-                exit_value = qty * exit_price
-                exit_cost = exit_value * cfg.commission_bps / 10_000
-                total_debit = entry_value + entry_cost
-            cash -= total_debit
-            net_pnl = exit_value - entry_value - entry_cost - exit_cost
+            exit_value = qty * exit_price
+            exit_cost = exit_value * cfg.commission_bps / 10_000
+            cash -= entry_value + entry_cost
             cash += exit_value - exit_cost
-            out.at[row_idx, "allocation_pct"] = budget / starting_cash
-            out.at[row_idx, "allocated_capital"] = budget
+            out.at[row_idx, "allocation_pct"] = entry_value / starting_cash
+            out.at[row_idx, "allocated_capital"] = entry_value
             out.at[row_idx, "quantity"] = qty
             out.at[row_idx, "entry_value"] = entry_value
             out.at[row_idx, "entry_cost"] = entry_cost
             out.at[row_idx, "exit_value"] = exit_value
             out.at[row_idx, "exit_cost"] = exit_cost
-            out.at[row_idx, "net_pnl"] = net_pnl
+            out.at[row_idx, "net_pnl"] = exit_value - entry_value - entry_cost - exit_cost
         out.loc[idx, "cash_after"] = cash
         out.loc[idx, "equity_after"] = cash
 
