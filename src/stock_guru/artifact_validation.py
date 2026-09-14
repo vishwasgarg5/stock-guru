@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 
 REQUIRED_FILES = ("ranker.joblib", "ohlc.joblib", "features.csv", "model_metadata.json")
+
+
+def file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_model_artifact(model_dir: str | Path, *, require_pit_context: bool = False) -> dict:
@@ -29,4 +38,4 @@ def validate_model_artifact(model_dir: str | Path, *, require_pit_context: bool 
             raise ValueError("model metadata requires pit_context")
         if not context.get("fundamentals_supplied") or not context.get("universe_intervals_supplied"):
             raise ValueError("PIT production artifact requires fundamentals and universe intervals")
-    return {"status": "valid", "model_version": metadata["model_version"], "features": features, "pit_context": metadata.get("pit_context", {})}
+    return {"status": "valid", "model_version": metadata["model_version"], "features": features, "pit_context": metadata.get("pit_context", {}), "file_sha256": {name: file_sha256(root / name) for name in REQUIRED_FILES}}
