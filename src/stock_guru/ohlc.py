@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import joblib
+import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.model_selection import TimeSeriesSplit
@@ -13,29 +14,26 @@ TARGETS = ["target_open", "target_high", "target_low", "target_close"]
 
 class OHLCForecaster:
     def __init__(self, params: dict | None = None):
-        base = dict(
-            objective="reg:squarederror", n_estimators=400, max_depth=5,
-            learning_rate=0.03, subsample=0.8, colsample_bytree=0.85,
-            reg_lambda=2.0, random_state=42,
-        )
+        base = dict(objective="reg:squarederror", n_estimators=400, max_depth=5, learning_rate=0.03, subsample=0.8, colsample_bytree=0.85, reg_lambda=2.0, random_state=42)
         if params:
             base.update(params)
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
         self.regime_adjustments: dict[str, dict[str, float]] = {}
+        self.regime_uncertainty: dict[str, float] = {}
+        self.global_uncertainty: float = float("nan")
         self.regime_adjustment_shrinkage = 0.5
         self.regime_models: dict[str, dict[str, XGBRegressor]] = {}
         self.regime_blend = {"bear": 0.25, "high_vol_bear": 0.25}
 
     def _fit_regime_adjustments(self, train: pd.DataFrame) -> None:
-        """Learn conservative regime corrections from date-grouped OOF residuals."""
+        """Learn conservative regime corrections and OOF uncertainty."""
         train = train.copy()
         if "date" in train:
             train["date"] = pd.to_datetime(train["date"]).dt.normalize()
             train = train.sort_values(["date", "symbol"] if "symbol" in train else ["date"])
         labels = train.apply(regime_label, axis=1)
         residuals = pd.DataFrame(index=train.index, columns=TARGETS, dtype=float)
-
         unique_dates = pd.Index(train["date"].drop_duplicates()) if "date" in train else pd.Index([])
         n_splits = min(3, max(0, len(unique_dates) // 20))
         if n_splits >= 2:
@@ -48,20 +46,20 @@ class OHLCForecaster:
                 for target, model in self.models.items():
                     oof_model = clone(model)
                     oof_model.fit(fit[self.features], fit[target])
-                    residuals.loc[valid.index, target] = (
-                        valid[target].to_numpy() - oof_model.predict(valid[self.features])
-                    )
+                    residuals.loc[valid.index, target] = valid[target].to_numpy() - oof_model.predict(valid[self.features])
 
+        valid_all = residuals.dropna()
+        self.global_uncertainty = float(valid_all["target_close"].abs().median()) if not valid_all.empty else float("nan")
         adjustments: dict[str, dict[str, float]] = {}
+        uncertainty: dict[str, float] = {}
         for label in ("bear", "high_vol_bear"):
             mask = labels.eq(label) & residuals.notna().all(axis=1)
             if mask.sum() < 10:
                 continue
-            adjustments[label] = {
-                target: float(residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage)
-                for target in TARGETS
-            }
+            adjustments[label] = {target: float(residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage) for target in TARGETS}
+            uncertainty[label] = float(residuals.loc[mask, "target_close"].abs().median())
         self.regime_adjustments = adjustments
+        self.regime_uncertainty = uncertainty
 
     def _fit_regime_models(self, train: pd.DataFrame) -> None:
         """Fit small specialist models only on adverse-regime training rows."""
@@ -82,16 +80,14 @@ class OHLCForecaster:
     def fit(self, df: pd.DataFrame, features: list[str]) -> "OHLCForecaster":
         self.features = features
         train = df.dropna(subset=features + TARGETS).copy()
-        weights = pd.Series(1.0, index=train.index)
         for target, model in self.models.items():
-            model.fit(train[features], train[target], sample_weight=weights)
+            model.fit(train[features], train[target])
         self._fit_regime_adjustments(train)
         self._fit_regime_models(train)
         return self
 
     @staticmethod
     def enforce_ohlc_constraints(out: pd.DataFrame) -> pd.DataFrame:
-        """Ensure predicted OHLC forms a physically valid daily candle."""
         out = out.copy()
         price_cols = ["pred_open", "pred_high", "pred_low", "pred_close"]
         for col in price_cols:
@@ -126,6 +122,9 @@ class OHLCForecaster:
         out["pred_high"] = base * (1 + out["pred_high"])
         out["pred_low"] = base * (1 + out["pred_low"])
         out["pred_close"] = base * (1 + out["pred_close"])
+        uncertainty = labels.map(self.regime_uncertainty).fillna(self.global_uncertainty)
+        out["pred_close_uncertainty_pct"] = uncertainty
+        out["forecast_confidence"] = 1.0 / (1.0 + 10.0 * uncertainty.clip(lower=0.0))
         return self.enforce_ohlc_constraints(out)
 
     def save(self, path: str) -> None:
