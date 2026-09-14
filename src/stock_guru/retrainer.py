@@ -8,8 +8,7 @@ import shutil
 import uuid
 import pandas as pd
 
-from .feedback import summarize_feedback
-from .model_selection import evaluate_candidate, should_promote
+from .model_selection import evaluate_candidate, should_promote, summarize_feedback
 from .pipeline import Pipeline
 
 
@@ -86,7 +85,6 @@ def adaptive_retrain(raw: pd.DataFrame, model_dir: str = "artifacts", min_train_
         training = _training_history(raw, cutoff)
         candidate = Pipeline(top_k=top_k).train(training)
         _promote_artifacts(candidate, model_path)
-        model_path.mkdir(parents=True, exist_ok=True)
         metrics_path.write_text(json.dumps(new_metrics, indent=2), encoding="utf-8")
     return decision
 
