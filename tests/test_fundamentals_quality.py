@@ -1,11 +1,17 @@
 import pandas as pd
 import pytest
 
-from stock_guru.fundamentals_quality import audit_pit_fundamentals, validate_fundamentals_manifest
+from stock_guru.fundamentals_quality import audit_pit_fundamentals, file_sha256, validate_fundamentals_manifest
 
 
 def manifest():
     return {"dataset":"pit_fundamentals","source_name":"test","source_url":"https://example.com","retrieved_at":"2026-09-14T00:00:00Z","license_or_terms":"test terms"}
+
+
+def make_file(tmp_path):
+    path = tmp_path / "fundamentals.csv"
+    pd.DataFrame([{"symbol":"ABC","reported_date":"2026-06-30","available_date":"2026-07-02","roe":10.0,"source":"s","source_id":"1"}]).to_csv(path, index=False)
+    return path
 
 
 def test_manifest_requires_all_provenance_fields():
@@ -14,9 +20,24 @@ def test_manifest_requires_all_provenance_fields():
 
 
 def test_audit_reports_hash_and_coverage(tmp_path):
-    path = tmp_path / "fundamentals.csv"
-    pd.DataFrame([{"symbol":"ABC","reported_date":"2026-06-30","available_date":"2026-07-02","roe":10.0,"source":"s","source_id":"1"}]).to_csv(path, index=False)
+    path = make_file(tmp_path)
     report = audit_pit_fundamentals(path, manifest())
     assert report["provenance_validated"] is True
     assert len(report["sha256"]) == 64
     assert report["unique_symbols"] == 1
+
+
+def test_audit_accepts_matching_fingerprint(tmp_path):
+    path = make_file(tmp_path)
+    m = manifest()
+    m["source_sha256"] = file_sha256(path)
+    report = audit_pit_fundamentals(path, m)
+    assert report["fingerprint_validated"] is True
+
+
+def test_audit_rejects_mutated_source(tmp_path):
+    path = make_file(tmp_path)
+    m = manifest()
+    m["source_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="fingerprint"):
+        audit_pit_fundamentals(path, m)
