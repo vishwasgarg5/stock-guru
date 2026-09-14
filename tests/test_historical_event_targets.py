@@ -25,11 +25,20 @@ def _rows(path):
         return list(csv.DictReader(handle))
 
 
-def test_verified_event_count_targets():
+def _targets():
     with TARGETS.open(newline="", encoding="utf-8") as handle:
-        targets = list(csv.DictReader(handle))
+        return list(csv.DictReader(handle))
 
-    for target in targets:
+
+def test_every_validation_target_has_a_source_mapping():
+    source_ids = {target["source_id"] for target in _targets()}
+    assert source_ids <= set(FILES), f"unmapped validation sources: {sorted(source_ids - set(FILES))}"
+    for source_id, path in FILES.items():
+        assert path.is_file(), f"missing event evidence file for {source_id}: {path}"
+
+
+def test_verified_event_count_targets():
+    for target in _targets():
         source_id = target["source_id"]
         path = FILES[source_id]
         rows = [row for row in _rows(path) if row["source_id"] == source_id]
