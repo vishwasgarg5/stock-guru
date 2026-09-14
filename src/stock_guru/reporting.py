@@ -4,6 +4,9 @@ from pathlib import Path
 import json
 import pandas as pd
 
+from .calibration import confidence_calibration_table
+from .monitoring import model_health_summary
+
 
 def _aggregate_fold_regimes(folds) -> dict:
     """Aggregate regime diagnostics across folds, weighted by forecast samples."""
@@ -43,17 +46,7 @@ def _forecast_confidence_metrics(predictions: pd.DataFrame) -> dict:
             result["median"] = float(valid.median())
             result["p10"] = float(valid.quantile(0.10))
             result["p90"] = float(valid.quantile(0.90))
-            if {"actual_close", "pred_close", "base_close"}.issubset(predictions.columns):
-                frame = predictions.loc[valid.index, ["actual_close", "pred_close", "base_close"]].copy()
-                frame["confidence"] = valid
-                frame["abs_error_pct"] = (frame["actual_close"] - frame["pred_close"]).abs() / frame["base_close"].abs().replace(0, pd.NA)
-                frame["confidence_bin"] = pd.cut(frame["confidence"], bins=[-float("inf"), 0.5, 0.6, 0.7, 0.8, 0.9, float("inf")], right=False)
-                calibration = {}
-                for bucket, group in frame.groupby("confidence_bin", observed=True):
-                    if group.empty:
-                        continue
-                    calibration[str(bucket)] = {"samples": int(len(group)), "mean_confidence": float(group["confidence"].mean()), "mean_abs_error_pct": float(group["abs_error_pct"].mean())}
-                result["calibration_bins"] = calibration
+            result["calibration_bins"] = confidence_calibration_table(predictions)
     if "pred_close_uncertainty_pct" in predictions:
         values = pd.to_numeric(predictions["pred_close_uncertainty_pct"], errors="coerce").dropna()
         if not values.empty:
@@ -63,7 +56,7 @@ def _forecast_confidence_metrics(predictions: pd.DataFrame) -> dict:
 
 
 def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -> dict:
-    """Persist portfolio metrics, cost sensitivity, fold metrics, and forecast diagnostics."""
+    """Persist portfolio metrics, cost sensitivity, fold metrics, and production health diagnostics."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     portfolio = result.get("portfolio", {})
@@ -77,8 +70,12 @@ def save_backtest_report(result: dict, output_dir: str = "artifacts/backtest") -
     predictions = result.get("predictions")
     confidence_metrics = _forecast_confidence_metrics(predictions)
     (out / "forecast_confidence.json").write_text(json.dumps(confidence_metrics, indent=2), encoding="utf-8")
+    drift = result.get("drift", {})
+    feedback = result.get("feedback", {})
+    health = model_health_summary(drift, confidence_metrics, feedback)
+    (out / "model_health.json").write_text(json.dumps(health, indent=2, default=str), encoding="utf-8")
     if folds:
         pd.DataFrame([{"train_end": f.train_end, "prediction_date": f.prediction_date, **f.metrics} for f in folds]).to_csv(out / "fold_metrics.csv", index=False)
     if isinstance(predictions, pd.DataFrame) and not predictions.empty:
         predictions.to_csv(out / "trades.csv", index=False)
-    return {"metrics": str(out / "metrics.json"), "cost_sensitivity": str(out / "cost_sensitivity.json") if cost_sensitivity else None, "regime_metrics": str(out / "regime_metrics.json"), "forecast_confidence": str(out / "forecast_confidence.json"), "fold_metrics": str(out / "fold_metrics.csv"), "trades": str(out / "trades.csv")}
+    return {"metrics": str(out / "metrics.json"), "cost_sensitivity": str(out / "cost_sensitivity.json") if cost_sensitivity else None, "regime_metrics": str(out / "regime_metrics.json"), "forecast_confidence": str(out / "forecast_confidence.json"), "model_health": str(out / "model_health.json"), "fold_metrics": str(out / "fold_metrics.csv"), "trades": str(out / "trades.csv")}
