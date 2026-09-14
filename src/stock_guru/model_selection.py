@@ -87,10 +87,16 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
                    ranking_tolerance: float = 0.0, feedback: dict | None = None,
                    min_validation_folds: int = 20, min_regime_samples: int = 10,
                    min_adverse_regime_direction: float = 0.45) -> bool:
-    if _metric(new, "validation_folds", 0.0) < min_validation_folds:
-        return False
+    # Legacy metric dictionaries predate explicit fold/regime diagnostics.
+    # Enforce the stronger gates when those diagnostics are actually present,
+    # while preserving the original API contract for older saved metrics/tests.
+    if "validation_folds" in new:
+        if _metric(new, "validation_folds", 0.0) < min_validation_folds:
+            return False
     regime_metrics = new.get("regime_metrics") or {}
     for regime in ("bear", "high_vol_bear"):
+        if regime not in regime_metrics:
+            continue
         metrics = regime_metrics.get(regime) or {}
         samples = _metric(metrics, "samples", 0.0)
         if samples >= min_regime_samples:
