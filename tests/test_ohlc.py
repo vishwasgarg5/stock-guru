@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from stock_guru.ohlc import OHLCForecaster, TARGETS
 
@@ -19,29 +20,36 @@ def test_ohlc_constraints_make_valid_candles():
     assert out.loc[0, "pred_low"] == 104.0
 
 
-def test_regime_adjustment_uses_training_residuals_only():
-    forecaster = OHLCForecaster(params={"n_estimators": 5, "max_depth": 2})
+def test_regime_adjustment_uses_oof_residuals_with_shrinkage():
+    forecaster = OHLCForecaster()
     forecaster.features = ["feature"]
     train = pd.DataFrame({
-        "feature": np.arange(20, dtype=float),
-        "market_ret_20d": [-0.04] * 10 + [0.04] * 10,
-        "market_volatility_20": [0.01] * 20,
-        "market_breadth": [0.40] * 10 + [0.70] * 10,
+        "date": pd.date_range("2026-01-01", periods=40, freq="D"),
+        "feature": np.arange(40, dtype=float),
+        "market_ret_20d": [0.04] * 20 + [-0.04] * 20,
+        "market_volatility_20": [0.01] * 40,
+        "market_breadth": [0.70] * 20 + [0.40] * 20,
     })
     for target in TARGETS:
         train[target] = 0.01
     forecaster.models = {target: _ConstantModel(0.0) for target in TARGETS}
     for target in TARGETS:
-        train.loc[:9, target] = 0.03
+        train.loc[20:, target] = 0.03
+
     forecaster._fit_regime_adjustments(train)
+
     assert set(forecaster.regime_adjustments) == {"bear"}
-    assert all(value == 0.03 for value in forecaster.regime_adjustments["bear"].values())
+    assert all(
+        value == pytest.approx(0.015)
+        for value in forecaster.regime_adjustments["bear"].values()
+    )
 
 
 def test_regime_adjustment_skips_small_regimes():
     forecaster = OHLCForecaster()
     forecaster.features = ["feature"]
     train = pd.DataFrame({
+        "date": pd.date_range("2026-01-01", periods=19, freq="D"),
         "feature": np.arange(19, dtype=float),
         "market_ret_20d": [-0.04] * 9 + [0.04] * 10,
         "market_volatility_20": [0.01] * 19,
