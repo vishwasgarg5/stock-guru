@@ -84,10 +84,15 @@ def build_reverse_event_derived_intervals(anchor_symbols: set[str], events: Iter
     rows = [r for r in _validate_events(events) if date.fromisoformat(r["effective_date"]) <= anchor]
     if lower is not None:
         rows = [r for r in rows if date.fromisoformat(r["effective_date"]) >= lower]
+
     active = {s.strip().upper() for s in anchor_symbols if s.strip()}
-    boundaries: dict[str, set[str]] = {anchor_date: set(active)}
-    provenance: dict[tuple[str, str], set[str]] = {}
-    for effective in sorted({r["effective_date"] for r in rows}, reverse=True):
+    event_dates = sorted({r["effective_date"] for r in rows}, reverse=True)
+    post_state: dict[str, set[str]] = {anchor_date: set(active)}
+    pre_state: dict[str, set[str]] = {}
+    transition_sources: dict[tuple[str, str], set[str]] = {}
+
+    for effective in event_dates:
+        post_state[effective] = set(active)
         batch = [r for r in rows if r["effective_date"] == effective]
         for event in reversed(batch):
             symbol = event["symbol"].strip().upper()
@@ -100,16 +105,35 @@ def build_reverse_event_derived_intervals(anchor_symbols: set[str], events: Iter
                 if symbol not in active:
                     raise ValueError(f"Cannot reverse include {symbol}: it is inactive after {effective}")
                 active.remove(symbol)
-            provenance.setdefault((effective, symbol), set()).add(source_id)
-        boundaries[effective] = set(active)
-    ordered = sorted(boundaries)
+            transition_sources.setdefault((effective, symbol), set()).add(source_id)
+        pre_state[effective] = set(active)
+
+    # For ascending event dates, the membership immediately before each date is
+    # the reconstructed pre-state; immediately after it is the post-state. This
+    # preserves effective-date semantics even when the anchor itself is an event.
+    dates = sorted(set(event_dates) | {anchor_date})
     intervals: list[MembershipInterval] = []
-    for idx, left in enumerate(ordered):
-        right = ordered[idx + 1] if idx + 1 < len(ordered) else None
-        for symbol in sorted(boundaries[left]):
-            source_ids = provenance.get((left, symbol), set())
-            tier = "EVENT_DERIVED" if source_ids else "BLOCKED"
-            intervals.append(MembershipInterval(symbol, left, right, tier, tuple(sorted(source_ids))))
+    for idx, left in enumerate(dates):
+        right = dates[idx + 1] if idx + 1 < len(dates) else None
+        if left == anchor_date:
+            members = post_state[anchor_date]
+        else:
+            members = post_state[left]
+        for symbol in sorted(members):
+            sources = transition_sources.get((left, symbol), set())
+            tier = "EVENT_DERIVED" if sources else "BLOCKED"
+            intervals.append(MembershipInterval(symbol, left, right, tier, tuple(sorted(sources))))
+
+    # Add the historical segment before the oldest event. Its left edge is not
+    # established by the supplied evidence, so it is intentionally BLOCKED.
+    if event_dates:
+        oldest = min(event_dates)
+        oldest_pre = pre_state[oldest]
+        prior_end = oldest
+        prior_start = start_date or "0001-01-01"
+        for symbol in sorted(oldest_pre):
+            intervals.append(MembershipInterval(symbol, prior_start, prior_end, "BLOCKED", tuple()))
+
     return [asdict(i) for i in intervals]
 
 
