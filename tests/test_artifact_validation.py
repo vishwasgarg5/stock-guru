@@ -18,6 +18,8 @@ def test_artifact_validation_passes(tmp_path):
     report = validate_model_artifact(tmp_path, require_pit_context=True)
     assert report["status"] == "valid"
     assert report["model_version"] == "abc123"
+    assert set(report["file_sha256"]) == {"ranker.joblib", "ohlc.joblib", "features.csv", "model_metadata.json"}
+    assert all(len(value) == 64 for value in report["file_sha256"].values())
 
 
 def test_artifact_validation_rejects_missing_file(tmp_path):
