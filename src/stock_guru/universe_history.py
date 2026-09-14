@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 REQUIRED = {"as_of", "symbol"}
+INTERVAL_COLUMNS = {"symbol", "start_date", "end_date"}
 
 
 def load_snapshots(path: str | Path) -> pd.DataFrame:
@@ -12,12 +13,36 @@ def load_snapshots(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing snapshot columns: {sorted(missing)}")
     df["as_of"] = pd.to_datetime(df["as_of"], errors="coerce").dt.normalize()
-    df["symbol"] = df["symbol"].astype(str).str.strip()
+    df["symbol"] = df["symbol"].astype(str).str.strip().str.upper()
     if df["as_of"].isna().any() or df["symbol"].eq("").any():
         raise ValueError("Snapshots contain invalid dates or blank symbols")
     if df.duplicated(["as_of", "symbol"]).any():
         raise ValueError("Snapshots contain duplicate as_of/symbol rows")
     return df.sort_values(["as_of", "symbol"]).reset_index(drop=True)
+
+
+def validate_membership_intervals(intervals: pd.DataFrame) -> pd.DataFrame:
+    """Normalize and reject malformed or overlapping PIT membership intervals."""
+    missing = INTERVAL_COLUMNS - set(intervals.columns)
+    if missing:
+        raise ValueError(f"Missing interval columns: {sorted(missing)}")
+    clean = intervals[list(INTERVAL_COLUMNS)].copy()
+    clean["symbol"] = clean["symbol"].astype(str).str.strip().str.upper()
+    clean["start_date"] = pd.to_datetime(clean["start_date"], errors="coerce").dt.normalize()
+    clean["end_date"] = pd.to_datetime(clean["end_date"], errors="coerce").dt.normalize()
+    if clean["symbol"].eq("").any() or clean["start_date"].isna().any():
+        raise ValueError("Universe intervals contain blank symbols or invalid start dates")
+    if (clean["end_date"].notna() & clean["start_date"].ge(clean["end_date"].fillna(pd.Timestamp.max))).any():
+        raise ValueError("Universe intervals must have end_date after start_date")
+    clean = clean.sort_values(["symbol", "start_date", "end_date"], na_position="last").reset_index(drop=True)
+    for symbol, group in clean.groupby("symbol", sort=False):
+        starts = group["start_date"].tolist()
+        ends = group["end_date"].tolist()
+        for idx in range(1, len(starts)):
+            previous_end = ends[idx - 1]
+            if pd.isna(previous_end) or starts[idx] < previous_end:
+                raise ValueError(f"Overlapping open-ended or dated intervals for symbol {symbol}")
+    return clean
 
 
 def build_membership_intervals(snapshots: pd.DataFrame) -> pd.DataFrame:
@@ -27,13 +52,7 @@ def build_membership_intervals(snapshots: pd.DataFrame) -> pd.DataFrame:
     The final interval remains open-ended. This does not fabricate membership before
     the first supplied snapshot.
     """
-    snapshots = snapshots.copy()
-    required = REQUIRED
-    if not required.issubset(snapshots.columns):
-        raise ValueError(f"Missing snapshot columns: {sorted(required - set(snapshots.columns))}")
-    snapshots["as_of"] = pd.to_datetime(snapshots["as_of"]).dt.normalize()
-    snapshots["symbol"] = snapshots["symbol"].astype(str).str.strip()
-    snapshots = snapshots.drop_duplicates(["as_of", "symbol"])
+    snapshots = load_snapshots_from_frame(snapshots)
     dates = sorted(snapshots["as_of"].unique())
     rows: list[dict] = []
     for i, start in enumerate(dates):
@@ -41,16 +60,32 @@ def build_membership_intervals(snapshots: pd.DataFrame) -> pd.DataFrame:
         members = snapshots.loc[snapshots["as_of"] == start, "symbol"]
         for symbol in members:
             rows.append({"symbol": symbol, "start_date": start, "end_date": end})
-    return pd.DataFrame(rows, columns=["symbol", "start_date", "end_date"])
+    return validate_membership_intervals(pd.DataFrame(rows, columns=["symbol", "start_date", "end_date"]))
+
+
+def load_snapshots_from_frame(snapshots: pd.DataFrame) -> pd.DataFrame:
+    """Apply the same snapshot normalization rules to an in-memory frame."""
+    clean = snapshots.copy()
+    missing = REQUIRED - set(clean.columns)
+    if missing:
+        raise ValueError(f"Missing snapshot columns: {sorted(missing)}")
+    clean["as_of"] = pd.to_datetime(clean["as_of"], errors="coerce").dt.normalize()
+    clean["symbol"] = clean["symbol"].astype(str).str.strip().str.upper()
+    if clean["as_of"].isna().any() or clean["symbol"].eq("").any():
+        raise ValueError("Snapshots contain invalid dates or blank symbols")
+    if clean.duplicated(["as_of", "symbol"]).any():
+        raise ValueError("Snapshots contain duplicate as_of/symbol rows")
+    return clean.sort_values(["as_of", "symbol"]).reset_index(drop=True)
 
 
 def universe_for_date(intervals: pd.DataFrame, as_of: str | pd.Timestamp) -> set[str]:
     """Return only membership supported by supplied historical snapshots."""
+    intervals = validate_membership_intervals(intervals)
     if intervals.empty:
         return set()
     d = pd.Timestamp(as_of).normalize()
-    start = pd.to_datetime(intervals["start_date"]).dt.normalize()
-    end = pd.to_datetime(intervals["end_date"], errors="coerce").dt.normalize()
+    start = intervals["start_date"]
+    end = intervals["end_date"]
     mask = start.le(d) & (end.isna() | end.gt(d))
     return set(intervals.loc[mask, "symbol"].astype(str))
 
@@ -61,11 +96,10 @@ def apply_point_in_time_universe(prices: pd.DataFrame, intervals: pd.DataFrame) 
         raise ValueError(f"Missing price columns: {sorted(required - set(prices.columns))}")
     p = prices.copy()
     p["date"] = pd.to_datetime(p["date"], errors="coerce").dt.normalize()
-    if p["date"].isna().any():
-        raise ValueError("Prices contain invalid dates")
-    i = intervals.copy()
-    i["start_date"] = pd.to_datetime(i["start_date"]).dt.normalize()
-    i["end_date"] = pd.to_datetime(i["end_date"], errors="coerce").dt.normalize()
+    p["symbol"] = p["symbol"].astype(str).str.strip().str.upper()
+    if p["date"].isna().any() or p["symbol"].eq("").any():
+        raise ValueError("Prices contain invalid dates or blank symbols")
+    i = validate_membership_intervals(intervals)
     keep = pd.Series(False, index=p.index)
     for _, row in i.iterrows():
         mask = p["date"].ge(row.start_date)
