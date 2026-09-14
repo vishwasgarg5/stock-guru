@@ -17,7 +17,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 
 ## Roadmap status
 
-- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
+- **Step 24 — Point-in-time universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, and coverage-quality reporting are implemented. Coverage validation now rejects invalid dates, blank provenance, unsupported actions, and duplicate symbol/date events. Real historical NIFTY 500 constituent events still need to be populated from a trustworthy historical source.
 - **Step 25 — Point-in-time fundamentals:** canonical filing-derived schema validation is implemented. Real filing/history ingestion still needs to be connected; no historical values are fabricated.
 - **Step 26 — Paper trading:** next-session execution, position caps, slippage/commission accounting, and idempotent trade persistence are implemented.
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
@@ -90,7 +90,7 @@ PYTHONPATH=src python -m stock_guru.cli universe-quality \
   --output artifacts/universe_quality.json
 ```
 
-The report records the supplied date span, snapshot count, row count, unique constituents, and inclusion/exclusion counts. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
+The report records the supplied snapshot span, snapshot counts, unique constituents, event counts, event span, and event provenance completeness. Invalid dates, blank symbols/provenance, unsupported actions, and duplicate effective-date/symbol events are rejected. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
 
 ## Train
 
