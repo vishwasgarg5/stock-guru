@@ -18,10 +18,7 @@ class FoldResult:
 
 
 def run_walk_forward_with_predictions(
-    raw: pd.DataFrame,
-    min_train_days: int = 252,
-    step_days: int = 20,
-    top_k: int = 10,
+    raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10,
 ) -> tuple[list[FoldResult], list[pd.DataFrame]]:
     """Run leakage-safe folds once and return metrics plus labeled predictions."""
     dates = sorted(pd.to_datetime(raw["date"]).dt.normalize().unique())
@@ -38,6 +35,12 @@ def run_walk_forward_with_predictions(
     actuals["date"] = pd.to_datetime(actuals["date"]).dt.normalize()
     actuals = actuals.sort_values(["symbol", "date"])
     actuals["next_close"] = actuals.groupby("symbol")["close"].shift(-1)
+    actuals["next_date"] = actuals.groupby("symbol")["date"].shift(-1)
+    session_next = pd.Series(dates[1:], index=pd.Index(dates[:-1]))
+    actuals["expected_next_date"] = actuals["date"].map(session_next)
+    # A symbol only receives a next-session label when its next observation is
+    # the same global trading session used by the walk-forward fold.
+    actuals.loc[actuals["next_date"] != actuals["expected_next_date"], "next_close"] = pd.NA
     actuals["base_close"] = actuals["close"]
 
     for idx in range(min_train_days, len(dates) - 1, step_days):
@@ -55,10 +58,7 @@ def run_walk_forward_with_predictions(
         ranking_base = scored[["date", "symbol", "rank_score"]].copy()
         ranking_base["prediction_date"] = prediction_date
         ranking_base["market_regime"] = market_regime
-        ranking_base = ranking_base.merge(
-            actuals[["date", "symbol", "base_close", "next_close"]],
-            on=["date", "symbol"], how="left"
-        ).dropna(subset=["base_close", "next_close"])
+        ranking_base = ranking_base.merge(actuals[["date", "symbol", "base_close", "next_close"]], on=["date", "symbol"], how="left").dropna(subset=["base_close", "next_close"])
         ranking_base["actual_close"] = ranking_base["next_close"]
 
         ranked = scored.head(top_k).copy()
@@ -69,12 +69,7 @@ def run_walk_forward_with_predictions(
         pred["rank"] = range(1, len(pred) + 1)
         pred["rank_confidence"] = confidence_from_rank(pred["rank_score"])
         pred["market_regime"] = market_regime
-
-        # Preserve risk inputs from the prediction-time feature row. The
-        # previous implementation dropped these columns when converting the
-        # ranked frame into OHLC forecasts, causing every backtest trade to
-        # fail closed on missing ATR/volatility/confidence fields.
-        risk_columns = ["atr_pct_14", "volatility_20"]
+        risk_columns = ["atr_pct_14", "volatility_20", "downside_volatility_20"]
         risk_frame = ranked[["symbol", *risk_columns]].copy()
         pred = pred.merge(risk_frame, on="symbol", how="left", validate="one_to_one")
 
@@ -94,7 +89,5 @@ def run_walk_forward_with_predictions(
 
 def run_walk_forward(raw: pd.DataFrame, min_train_days: int = 252, step_days: int = 20, top_k: int = 10) -> list[FoldResult]:
     """Evaluate next-session forecasts with expanding, leakage-safe training windows."""
-    results, _ = run_walk_forward_with_predictions(
-        raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k
-    )
+    results, _ = run_walk_forward_with_predictions(raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k)
     return results
