@@ -1,0 +1,3 @@
+effective_date,symbol,action,source,source_id
+2023-10-26,KIRLFER,exclude,https://niftyindices.com/Press_Release/ind_prs17102023.pdf,ind_prs17102023
+2023-10-26,CONCORDBIO,include,https://niftyindices.com/Press_Release/ind_prs17102023.pdf,ind_prs17102023
