@@ -49,3 +49,8 @@ def test_event_summary_rejects_unsupported_action():
 def test_snapshot_summary_requires_provenance_independent_fields():
     with pytest.raises(ValueError, match="Missing snapshot columns"):
         summarize_snapshots(pd.DataFrame({"as_of": ["2020-01-01"]}))
+
+
+def test_event_summary_requires_provenance_columns():
+    with pytest.raises(ValueError, match="Missing event columns"):
+        summarize_events(pd.DataFrame({"effective_date": ["2020-01-01"], "symbol": ["A"], "action": ["include"]}))
