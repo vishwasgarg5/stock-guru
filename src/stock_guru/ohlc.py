@@ -20,8 +20,8 @@ class OHLCForecaster:
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
         self.regime_adjustments: dict[str, dict[str, float]] = {}
-        self.regime_uncertainty: dict[str, float] = {}
-        self.global_uncertainty: float = float("nan")
+        self.regime_uncertainty: dict[str, dict[str, float]] = {}
+        self.global_uncertainty: dict[str, float] = {}
         self.regime_adjustment_shrinkage = 0.5
         self.regime_models: dict[str, dict[str, XGBRegressor]] = {}
         self.regime_blend = {"bear": 0.25, "high_vol_bear": 0.25}
@@ -49,15 +49,17 @@ class OHLCForecaster:
                     residuals.loc[valid.index, target] = valid[target].to_numpy() - oof_model.predict(valid[self.features])
 
         valid_all = residuals.dropna()
-        self.global_uncertainty = float(valid_all["target_close"].abs().median()) if not valid_all.empty else float("nan")
+        self.global_uncertainty = {
+            target: float(valid_all[target].abs().median()) for target in TARGETS
+        } if not valid_all.empty else {}
         adjustments: dict[str, dict[str, float]] = {}
-        uncertainty: dict[str, float] = {}
+        uncertainty: dict[str, dict[str, float]] = {}
         for label in ("bear", "high_vol_bear"):
             mask = labels.eq(label) & residuals.notna().all(axis=1)
             if mask.sum() < 10:
                 continue
             adjustments[label] = {target: float(residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage) for target in TARGETS}
-            uncertainty[label] = float(residuals.loc[mask, "target_close"].abs().median())
+            uncertainty[label] = {target: float(residuals.loc[mask, target].abs().median()) for target in TARGETS}
         self.regime_adjustments = adjustments
         self.regime_uncertainty = uncertainty
 
@@ -118,13 +120,18 @@ class OHLCForecaster:
                 out.loc[mask, target.replace("target_", "pred_")] += correction
 
         base = out["close"]
-        out["pred_open"] = base * (1 + out["pred_open"])
-        out["pred_high"] = base * (1 + out["pred_high"])
-        out["pred_low"] = base * (1 + out["pred_low"])
-        out["pred_close"] = base * (1 + out["pred_close"])
-        uncertainty = labels.map(self.regime_uncertainty).fillna(self.global_uncertainty)
-        out["pred_close_uncertainty_pct"] = uncertainty
-        out["forecast_confidence"] = 1.0 / (1.0 + 10.0 * uncertainty.clip(lower=0.0))
+        for target in TARGETS:
+            col = target.replace("target_", "pred_")
+            out[col] = base * (1 + out[col])
+
+        uncertainty = pd.DataFrame(index=out.index, dtype=float)
+        for target in TARGETS:
+            global_value = self.global_uncertainty.get(target, float("nan"))
+            values = labels.map(lambda label: self.regime_uncertainty.get(label, {}).get(target, global_value))
+            uncertainty[target.replace("target_", "pred_")] = values
+        out["pred_close_uncertainty_pct"] = uncertainty["pred_close"]
+        out["pred_ohlc_uncertainty_pct"] = uncertainty.mean(axis=1)
+        out["forecast_confidence"] = 1.0 / (1.0 + 10.0 * out["pred_close_uncertainty_pct"].clip(lower=0.0))
         return self.enforce_ohlc_constraints(out)
 
     def save(self, path: str) -> None:
