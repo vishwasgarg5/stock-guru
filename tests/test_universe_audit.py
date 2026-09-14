@@ -2,22 +2,11 @@ import json
 
 import pytest
 
-from stock_guru.universe_audit import (
-    build_source_audit,
-    compare_source_fingerprint,
-    save_source_audit,
-    sha256_file,
-)
+from stock_guru.universe_audit import build_source_audit, compare_source_fingerprint, save_source_audit, sha256_file
 
 
 def _manifest():
-    return {
-        "dataset": "nifty500_membership",
-        "source_name": "Example authoritative source",
-        "source_url": "https://example.com/nifty500",
-        "retrieved_at": "2026-09-14T00:00:00Z",
-        "license_or_terms": "Use subject to source terms",
-    }
+    return {"dataset": "nifty500_membership", "source_name": "Example authoritative source", "source_url": "https://example.com/nifty500", "retrieved_at": "2026-09-14T00:00:00Z", "license_or_terms": "Use subject to source terms"}
 
 
 def test_sha256_is_stable(tmp_path):
@@ -67,3 +56,14 @@ def test_source_audit_rejects_bad_source(tmp_path):
     manifest.write_text(json.dumps({"dataset": "wrong"}), encoding="utf-8")
     with pytest.raises(ValueError, match="Missing source manifest fields"):
         build_source_audit(snapshot, manifest)
+
+
+def test_source_audit_honors_manifest_fingerprint(tmp_path):
+    snapshot = tmp_path / "snapshots.csv"
+    snapshot.write_text("as_of,symbol\n2024-01-31,ABC\n", encoding="utf-8")
+    m = _manifest()
+    m["source_sha256"] = sha256_file(snapshot)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(m), encoding="utf-8")
+    report = build_source_audit(snapshot, manifest)
+    assert report["source_sha256"] == sha256_file(snapshot)
