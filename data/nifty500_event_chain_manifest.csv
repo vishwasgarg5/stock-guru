@@ -6,6 +6,7 @@ ind_prs01092022,2022-09-30,data/nifty500_events_2022_09_periodic.csv,verified
 ind_prs16092022,2022-09-30,data/nifty500_events_2022_09_amalgamation.csv,verified
 ind_prs17082023,2023-09-29,data/nifty500_events_2023_09.csv,verified
 ind_prs17102023,2023-10-26,data/nifty500_events_2023_10.csv,verified
+ind_prs28022024,2024-03-28,data/nifty500_events_2024_03.csv,verified
 ind_prs23082024,2024-09-30,data/nifty500_events_2024_09_final.csv,verified
 ind_prs25092024,2024-09-30,data/nifty500_events_2024_09_final.csv,correction-preserved-in-file
 ind_prs21022025,2025-03-28,data/nifty500_events_2025_2024.csv,verified
