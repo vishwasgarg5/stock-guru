@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -34,3 +35,15 @@ def test_pit_fundamentals_reject_duplicate_asof_observations():
     })
     with pytest.raises(ValueError, match="Duplicate"):
         validate_pit_fundamentals(frame)
+
+
+def test_pit_fundamentals_reject_nonnumeric_or_nonfinite_values():
+    for value in ["not-a-number", np.inf]:
+        frame = pd.DataFrame({
+            "symbol": ["TCS"],
+            "reported_date": ["2026-01-10"],
+            "available_date": ["2026-01-11"],
+            "eps": [value],
+        })
+        with pytest.raises(ValueError, match="nonnumeric or nonfinite"):
+            validate_pit_fundamentals(frame)
