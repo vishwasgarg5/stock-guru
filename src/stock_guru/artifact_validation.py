@@ -5,6 +5,7 @@ import hashlib
 import json
 
 REQUIRED_FILES = ("ranker.joblib", "ohlc.joblib", "features.csv", "model_metadata.json")
+MANIFEST_KEYS = ("model_version", "trained_through", "ranker_sha256", "ohlc_sha256", "features_sha256", "metadata_sha256")
 
 
 def file_sha256(path: str | Path) -> str:
@@ -13,6 +14,19 @@ def file_sha256(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def validate_artifact_manifest(manifest: dict) -> dict:
+    missing = [key for key in MANIFEST_KEYS if key not in manifest]
+    if missing:
+        raise ValueError(f"Artifact manifest missing fields: {missing}")
+    for key in MANIFEST_KEYS:
+        if not str(manifest[key]).strip():
+            raise ValueError(f"Artifact manifest field {key} must be nonblank")
+    for key in MANIFEST_KEYS[2:]:
+        if len(str(manifest[key]).strip()) != 64:
+            raise ValueError(f"Artifact manifest field {key} must be a 64-character SHA-256")
+    return dict(manifest)
 
 
 def validate_model_artifact(model_dir: str | Path, *, require_pit_context: bool = False) -> dict:
