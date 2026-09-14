@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "certification": "BLOCKED",
+  "status": "blocked",
+  "as_of": "2026-09-15",
+  "completed_development_steps": 30,
+  "remaining_certification_tasks": [
+    "authoritative_historical_nifty500_membership_snapshots",
+    "verified_historical_pit_fundamentals",
+    "real_pit_backtest_and_walk_forward_evidence",
+    "final_ready_certification"
+  ],
+  "evidence_policy": "Missing historical evidence is a blocker; synthetic or inferred history is prohibited.",
+  "current_event_ledger": "data/nifty500_events.csv",
+  "historical_source_log": "data/nifty500_historical_source_log.csv",
+  "next_required_input": "Authoritative historical NIFTY 500 constituent snapshots with provenance and retrieval evidence."
+}
