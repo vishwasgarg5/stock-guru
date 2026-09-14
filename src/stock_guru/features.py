@@ -29,14 +29,18 @@ def add_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     loss = (-delta.clip(upper=0)).groupby(out["symbol"]).transform(lambda s: s.rolling(14).mean())
     rs = gain / loss.replace(0, np.nan)
     out["rsi_14"] = 100 - (100 / (1 + rs))
-    out["volatility_20"] = g["close"].pct_change().groupby(out["symbol"]).transform(lambda s: s.rolling(20).std())
+    returns = g["close"].pct_change()
+    out["volatility_20"] = returns.groupby(out["symbol"]).transform(lambda s: s.rolling(20).std())
+    out["downside_volatility_20"] = returns.clip(upper=0).groupby(out["symbol"]).transform(
+        lambda s: s.rolling(20).std()
+    )
     out["volume_ratio_20"] = out["volume"] / out.groupby("symbol")["volume"].transform(lambda s: s.rolling(20).mean())
     out["atr_pct_14"] = ((out["high"] - out["low"]) / out["close"]).groupby(out["symbol"]).transform(lambda s: s.rolling(14).mean())
     return out
 
 
 def add_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Create next-day normalized OHLC targets from today's close."""
+    """Create next-day normalized OHLC, gap, range and return targets."""
     out = df.sort_values(["symbol", "date"]).copy()
     g = out.groupby("symbol")
     next_open = g["open"].shift(-1)
@@ -49,6 +53,10 @@ def add_targets(df: pd.DataFrame) -> pd.DataFrame:
     out["target_low"] = next_low / base - 1
     out["target_close"] = next_close / base - 1
     out["target_return"] = out["target_close"]
+    out["target_gap"] = next_open / base - 1
+    out["target_upside"] = next_high / base - 1
+    out["target_downside"] = next_low / base - 1
+    out["target_intraday_range"] = next_high / next_low - 1
     return out
 
 
@@ -57,12 +65,11 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     out = add_market_regime_features(out)
     fundamentals = [c for c in BASE_FUNDAMENTALS if c in out.columns]
     technical = [
-        "ret_1d", "ret_5d", "ret_20d", "sma_10", "sma_20", "sma_50",
-        "ema_20", "ema_50", "rsi_14", "volatility_20", "volume_ratio_20", "atr_pct_14",
+        "ret_1d", "ret_5d", "ret_20d", "rsi_14", "volatility_20", "downside_volatility_20",
+        "volume_ratio_20", "atr_pct_14",
     ]
     for c in ["sma_10", "sma_20", "sma_50", "ema_20", "ema_50"]:
         out[f"{c}_ratio"] = out[c] / out["close"] - 1
-    technical = [c for c in technical if c not in {"sma_10", "sma_20", "sma_50", "ema_20", "ema_50"}]
     technical += ["sma_10_ratio", "sma_20_ratio", "sma_50_ratio", "ema_20_ratio", "ema_50_ratio"]
     features = fundamentals + technical + REGIME_FEATURES
     out[features] = out[features].replace([np.inf, -np.inf], np.nan)
