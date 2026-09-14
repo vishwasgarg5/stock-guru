@@ -19,6 +19,8 @@ def validate_fundamentals_manifest(manifest: dict) -> dict:
     for key in REQUIRED_MANIFEST:
         if not str(manifest[key]).strip():
             raise ValueError(f"Fundamentals manifest field {key!r} must be nonblank")
+    if "source_sha256" in manifest and not str(manifest["source_sha256"]).strip():
+        raise ValueError("Fundamentals manifest source_sha256 must be nonblank when supplied")
     return dict(manifest)
 
 
@@ -34,6 +36,10 @@ def audit_pit_fundamentals(path: str | Path, manifest: dict) -> dict:
     manifest = validate_fundamentals_manifest(manifest)
     frame = pd.read_csv(path)
     clean = validate_pit_fundamentals(frame)
+    actual_sha256 = file_sha256(path)
+    expected_sha256 = manifest.get("source_sha256")
+    if expected_sha256 is not None and actual_sha256 != str(expected_sha256).strip():
+        raise ValueError("Fundamentals source fingerprint does not match manifest")
     return {
         "dataset": "pit_fundamentals",
         "source_name": manifest["source_name"],
@@ -45,7 +51,8 @@ def audit_pit_fundamentals(path: str | Path, manifest: dict) -> dict:
         "max_reported_date": clean["reported_date"].max().date().isoformat(),
         "min_available_date": clean["available_date"].min().date().isoformat(),
         "max_available_date": clean["available_date"].max().date().isoformat(),
-        "sha256": file_sha256(path),
+        "sha256": actual_sha256,
+        "fingerprint_validated": expected_sha256 is not None,
         "provenance_validated": True,
     }
 
