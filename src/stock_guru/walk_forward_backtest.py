@@ -7,16 +7,23 @@ from .walk_forward import run_walk_forward_with_predictions
 from .risk import final_trade_decision
 
 
-def run_strategy_walk_forward(raw: pd.DataFrame, min_train_days: int = 252,
-                              step_days: int = 20, top_k: int = 10,
-                              transaction_cost_bps: float = 10.0) -> dict:
-    """Run leakage-safe walk-forward predictions and backtest selected trades.
-
-    Each fold is fitted exactly once. Forecasts are labeled with the following
-    session's actual close, risk-filtered, and passed to the portfolio backtester.
-    """
+def run_strategy_walk_forward(
+    raw: pd.DataFrame,
+    min_train_days: int = 252,
+    step_days: int = 20,
+    top_k: int = 10,
+    transaction_cost_bps: float = 10.0,
+    fundamentals: pd.DataFrame | None = None,
+    universe_intervals: pd.DataFrame | None = None,
+) -> dict:
+    """Run leakage-safe PIT-aware walk-forward predictions and backtest trades."""
     fold_results, fold_predictions = run_walk_forward_with_predictions(
-        raw, min_train_days=min_train_days, step_days=step_days, top_k=top_k
+        raw,
+        min_train_days=min_train_days,
+        step_days=step_days,
+        top_k=top_k,
+        fundamentals=fundamentals,
+        universe_intervals=universe_intervals,
     )
 
     all_predictions = [final_trade_decision(pred.copy()) for pred in fold_predictions]
