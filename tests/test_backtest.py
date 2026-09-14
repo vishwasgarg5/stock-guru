@@ -30,6 +30,27 @@ def test_backtest_reports_regime_metrics():
     assert result["regime_metrics"]["bear"]["total_return"] < 0
 
 
+def test_backtest_reports_slippage_separately():
+    predictions = pd.DataFrame([
+        {"prediction_date": "2025-01-02", "symbol": "AAA", "position_weight": 1.0, "trade": True, "base_close": 100, "actual_close": 102},
+        {"prediction_date": "2025-01-03", "symbol": "AAA", "position_weight": 0.0, "trade": False, "base_close": 102, "actual_close": 101},
+    ])
+    result = backtest(predictions, transaction_cost_bps=10, slippage_bps=5)
+    assert result["total_transaction_cost"] > 0
+    assert result["total_slippage_cost"] > 0
+    assert result["total_execution_cost"] == result["total_transaction_cost"] + result["total_slippage_cost"]
+
+
+def test_backtest_rejects_negative_execution_costs():
+    predictions = pd.DataFrame([{"prediction_date": "2025-01-02", "symbol": "AAA", "position_weight": 1.0, "trade": True, "base_close": 100, "actual_close": 102}])
+    try:
+        backtest(predictions, slippage_bps=-1)
+    except ValueError as exc:
+        assert "non-negative" in str(exc)
+    else:
+        raise AssertionError("Expected non-negative execution-cost validation")
+
+
 def test_backtest_rejects_missing_columns():
     try:
         backtest(pd.DataFrame([{"symbol": "AAA"}]))
