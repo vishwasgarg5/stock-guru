@@ -21,8 +21,17 @@ Production hardening includes strict market-session calendar validation, paper-t
 
 - **Core model, ranking, OHLC forecasting, risk, uncertainty, calibration, walk-forward, costs, feedback, retraining, paper trading, and challenger infrastructure:** implemented and regression protected.
 - **PIT universe:** interval builder, as-of filtering, provenance-bearing baseline/event reconstruction, coverage-quality reporting, interval integrity checks, source-gap diagnostics, fingerprints, audit reports, and reconciliation controls are implemented. Real historical NIFTY 500 constituent evidence still must be supplied and verified.
+- **Historical event evidence:** official NSE Indices releases are now captured for verified 2021-2026 replacement events, including March 2023 and March 2024; each event retains its source ID, effective date, source URL, and action. Same-effective-date releases remain provenance-distinct. The event-chain audit blocks missing evidence, invalid manifest statuses, date mismatches, and unknown source IDs.
 - **PIT fundamentals:** canonical filing-derived schema validation, availability-date protection, provenance validation, source fingerprinting, and quality reporting are implemented. Real historical filing values still must be supplied and verified.
 - **Production readiness:** the final gate now requires both engineering gates and real historical-data/evaluation evidence. It cannot report `ready` merely because tests pass.
+
+Run the historical event audit with:
+
+```bash
+PYTHONPATH=src python -m stock_guru.cli event-audit
+```
+
+A `PASS` from this audit means the recorded event evidence is internally reconciled; it does **not** certify the historical universe without an authoritative snapshot anchor.
 
 ## Final readiness gate
 
