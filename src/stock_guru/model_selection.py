@@ -116,24 +116,20 @@ def should_promote(old: dict | None, new: dict, rmse_tolerance: float = 0.0,
 
 def select_champion(candidates: dict[str, dict], incumbent: str | None = None,
                     feedback: dict | None = None, **promotion_kwargs) -> dict:
-    """Select the best candidate that passes the same promotion gates as production."""
+    """Select the best candidate that beats the incumbent promotion gates."""
     if not candidates:
         raise ValueError("No candidate metrics supplied")
+    if incumbent is not None and incumbent not in candidates:
+        raise ValueError("Incumbent must be present in candidates")
 
     incumbent_metrics = candidates.get(incumbent) if incumbent else None
     eligible = {
         name: metrics for name, metrics in candidates.items()
-        if should_promote(incumbent_metrics, metrics, feedback=feedback, **promotion_kwargs)
+        if name != incumbent and should_promote(incumbent_metrics, metrics, feedback=feedback, **promotion_kwargs)
     }
-
-    if incumbent and incumbent in candidates:
-        incumbent_passes = incumbent in eligible
-        if not eligible or not incumbent_passes:
-            return {"champion": incumbent, "promoted": False,
-                    "reason": "no_candidate_passed_promotion_gate"}
-
     if not eligible:
-        return {"champion": None, "promoted": False,
+        champion = incumbent if incumbent is not None else None
+        return {"champion": champion, "promoted": False,
                 "reason": "no_candidate_passed_promotion_gate"}
 
     winner = min(
