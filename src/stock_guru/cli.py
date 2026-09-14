@@ -33,7 +33,13 @@ def load_universe(path: str | None) -> pd.DataFrame | None:
     for col in ("start_date", "end_date"):
         df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
     if df[["start_date", "end_date"]].isna().any().any():
-        raise ValueError("Universe intervals contain invalid dates")
+        # end_date is allowed to be open-ended for the last membership interval.
+        if df["end_date"].isna().any() and df["start_date"].notna().all():
+            pass
+        else:
+            raise ValueError("Universe intervals contain invalid dates")
+    if (df["end_date"].notna() & df["start_date"].ge(df["end_date"].fillna(pd.Timestamp.max))).any():
+        raise ValueError("Universe intervals must have end_date after start_date")
     return df
 
 
@@ -64,7 +70,7 @@ def main() -> None:
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     uh = sub.add_parser("universe-history", help="Build PIT universe intervals from an authoritative baseline and event ledger")
     uh.add_argument("--baseline", required=True, help="CSV containing exactly one as_of date and symbol column")
-    uh.add_argument("--events", required=True, help="Provenance-bearing inclusion/exclusion event CSV")
+    uh.add_argument("--events", required=True, help="Provenance-bearing event CSV")
     uh.add_argument("--output", default="data/nifty500_universe_history.csv")
     uq = sub.add_parser("universe-quality", help="Report PIT universe coverage without assuming historical completeness")
     uq.add_argument("--snapshots", required=True, help="CSV containing as_of and symbol columns")
@@ -76,6 +82,7 @@ def main() -> None:
     us.add_argument("--manifest", required=True, help="JSON provenance manifest for the snapshot source")
     us.add_argument("--expected-constituents", type=int, default=None)
     us.add_argument("--require-full-snapshot-size", action="store_true")
+    us.add_argument("--gap-threshold-days", type=int, default=None)
     args = parser.parse_args()
 
     if args.command == "download":
@@ -153,7 +160,7 @@ def main() -> None:
         print(output.read_text(encoding="utf-8"))
     elif args.command == "universe-source-validate":
         from .universe_source import validate_source_bundle
-        report = validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size)
+        report = validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days)
         print(json.dumps(report, indent=2))
 
 
