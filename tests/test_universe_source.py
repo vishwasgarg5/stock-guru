@@ -31,13 +31,17 @@ def test_source_manifest_round_trip(tmp_path):
     assert load_source_manifest(path)["dataset"] == "nifty500_membership"
 
 
-def test_historical_snapshot_rejects_partial_nifty500_set():
+def test_historical_snapshot_rejects_partial_set_when_source_requires_full_size():
     snapshots = pd.DataFrame({
         "as_of": pd.to_datetime(["2024-01-31", "2024-01-31"]),
         "symbol": ["A", "B"],
     })
-    with pytest.raises(ValueError, match="not full NIFTY 500"):
-        validate_historical_snapshots(snapshots)
+    with pytest.raises(ValueError, match="not full sets"):
+        validate_historical_snapshots(
+            snapshots,
+            expected_constituents=500,
+            require_full_snapshot_size=True,
+        )
 
 
 def test_historical_snapshot_can_be_validated_without_fabrication():
@@ -45,9 +49,6 @@ def test_historical_snapshot_can_be_validated_without_fabrication():
         "as_of": pd.to_datetime(["2024-01-31"] * 3),
         "symbol": ["A", "B", "C"],
     })
-    out = validate_historical_snapshots(
-        snapshots,
-        expected_constituents=3,
-    )
+    out = validate_historical_snapshots(snapshots)
     assert len(out) == 3
     assert set(out["symbol"]) == {"A", "B", "C"}
