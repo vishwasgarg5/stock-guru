@@ -3,6 +3,8 @@ from __future__ import annotations
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
+from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
 from .regime import regime_label
@@ -22,21 +24,36 @@ class OHLCForecaster:
         self.models = {target: XGBRegressor(**base) for target in TARGETS}
         self.features: list[str] = []
         self.regime_adjustments: dict[str, dict[str, float]] = {}
+        self.regime_adjustment_shrinkage = 0.5
 
     def _fit_regime_adjustments(self, train: pd.DataFrame) -> None:
-        """Learn small additive residual corrections from training data only."""
+        """Learn conservative regime corrections from time-series OOF residuals."""
         labels = train.apply(regime_label, axis=1)
-        residuals = pd.DataFrame(index=train.index)
-        for target, model in self.models.items():
-            residuals[target] = train[target] - model.predict(train[self.features])
+        train = train.copy().sort_values("date") if "date" in train else train.copy()
+        residuals = pd.DataFrame(index=train.index, columns=TARGETS, dtype=float)
+        n_splits = min(3, max(0, len(train) // 20))
+
+        if n_splits >= 2:
+            splitter = TimeSeriesSplit(n_splits=n_splits)
+            for fit_idx, valid_idx in splitter.split(train):
+                fit = train.iloc[fit_idx]
+                valid = train.iloc[valid_idx]
+                for target, model in self.models.items():
+                    oof_model = clone(model)
+                    oof_model.fit(fit[self.features], fit[target])
+                    residuals.loc[valid.index, target] = (
+                        valid[target].to_numpy() - oof_model.predict(valid[self.features])
+                    )
 
         adjustments: dict[str, dict[str, float]] = {}
         for label in ("bear", "high_vol_bear"):
-            mask = labels.eq(label)
+            mask = labels.reindex(train.index).eq(label) & residuals.notna().all(axis=1)
             if mask.sum() < 10:
                 continue
             adjustments[label] = {
-                target: float(residuals.loc[mask, target].median())
+                target: float(
+                    residuals.loc[mask, target].median() * self.regime_adjustment_shrinkage
+                )
                 for target in TARGETS
             }
         self.regime_adjustments = adjustments
