@@ -23,7 +23,8 @@ The repository contains the model baseline plus guarded infrastructure for point
 - **Step 27 — Feedback/retraining:** prediction settlement and validation-gated adaptive retraining are wired through the existing ledger/retrainer path.
 - **Step 28 — Temporal challenger:** an optional PyTorch LSTM challenger is isolated from the production XGBoost path and cannot silently replace it.
 - **Steps 29–38 — PIT/data-quality hardening:** a reusable point-in-time fundamentals as-of join is available; feature construction and the model pipeline can consume PIT fundamentals and optional PIT universe intervals; fundamental values are validated for numeric/finite content; market feature inputs reject malformed or duplicate symbol/date observations; OHLC training/prediction fails closed on empty usable data; regression tests cover the new guards.
-- **Steps 39–42 — PIT universe ingestion hardening:** normalized snapshot/event validators, CSV ingestion helpers, provenance-aware templates, and regression tests are now in place. These changes prepare the repository for importing real historical NIFTY 500 evidence without fabricating missing history.
+- **Steps 39–43 — PIT universe ingestion hardening:** normalized snapshot/event validators, provenance-bearing templates, source manifests, source-bundle audit validation, a CLI validation command, and provenance-aware coverage reporting are now in place. These changes prepare the repository for importing real historical NIFTY 500 evidence without fabricating missing history.
+- **Step 44 onward:** connect a verified historical membership source and populate actual dated snapshots/events; then run completeness and survivorship-bias validation before enabling historical performance claims.
 
 ## Design
 
@@ -31,6 +32,7 @@ The repository contains the model baseline plus guarded infrastructure for point
 - `src/stock_guru/universe_history.py`: point-in-time constituent snapshots and membership intervals.
 - `src/stock_guru/universe_events.py`: provenance-bearing inclusion/exclusion events and baseline reconstruction.
 - `src/stock_guru/universe_ingest.py`: normalization and validation for PIT universe snapshots/events.
+- `src/stock_guru/universe_source.py`: provenance manifest and historical-source bundle validation.
 - `src/stock_guru/universe_coverage.py`: PIT universe coverage and integrity report without inferring historical completeness.
 - `src/stock_guru/fundamentals.py`: legacy-compatible PIT fundamentals loading/as-of join.
 - `src/stock_guru/fundamentals_ingest.py`: validation/normalization contract for filing-derived PIT fundamentals.
@@ -88,6 +90,18 @@ PYTHONPATH=src python -m stock_guru.cli universe-history \
 
 The reconstruction is deliberately conservative: it does not invent membership before the supplied baseline, rejects duplicate symbol/date events, and rejects impossible include/exclude transitions.
 
+## Validate a historical source before ingestion
+
+Every real historical snapshot dataset should be accompanied by a provenance manifest containing `dataset`, `source_name`, `source_url`, `retrieved_at`, and `license_or_terms`.
+
+```bash
+PYTHONPATH=src python -m stock_guru.cli universe-source-validate \
+  --snapshots data/nifty500_snapshots.csv \
+  --manifest data/nifty500_source_manifest.json
+```
+
+The validator normalizes symbols and dates, rejects duplicate observations, and reports the observed snapshot span and constituent-count range. It never fills missing constituents. If a source contract explicitly guarantees a fixed snapshot size, add `--expected-constituents N --require-full-snapshot-size`; otherwise source-specific counts are allowed.
+
 ## Check universe coverage
 
 After generating snapshots, produce a machine-readable coverage report:
@@ -96,10 +110,11 @@ After generating snapshots, produce a machine-readable coverage report:
 PYTHONPATH=src python -m stock_guru.cli universe-quality \
   --snapshots data/nifty500_snapshots.csv \
   --events data/nifty500_events.csv \
+  --manifest data/nifty500_source_manifest.json \
   --output artifacts/universe_quality.json
 ```
 
-The report records the supplied snapshot span, snapshot counts, unique constituents, event counts, event span, and event provenance completeness. Invalid dates, blank symbols/provenance, unsupported actions, and duplicate effective-date/symbol events are rejected. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
+The report records the supplied snapshot span, snapshot counts, unique constituents, event counts, event span, event provenance completeness, and source provenance. It deliberately reports `historical_completeness: unknown`; coverage evidence is not treated as proof that every historical rebalance has been captured.
 
 ## Train
 
