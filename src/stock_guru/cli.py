@@ -51,6 +51,11 @@ def main() -> None:
     uq.add_argument("--snapshots", required=True, help="CSV containing as_of and symbol columns")
     uq.add_argument("--events", default=None, help="Optional provenance-bearing event CSV")
     uq.add_argument("--output", default="artifacts/universe_quality.json")
+    us = sub.add_parser("universe-source-validate", help="Validate historical universe snapshots and provenance manifest")
+    us.add_argument("--snapshots", required=True, help="Historical snapshot CSV with as_of and symbol columns")
+    us.add_argument("--manifest", required=True, help="JSON provenance manifest for the snapshot source")
+    us.add_argument("--expected-constituents", type=int, default=None)
+    us.add_argument("--require-full-snapshot-size", action="store_true")
     args = parser.parse_args()
 
     if args.command == "download":
@@ -122,6 +127,15 @@ def main() -> None:
         events = pd.read_csv(args.events) if args.events else None
         output = save_coverage_report(snapshots, args.output, events)
         print(output.read_text(encoding="utf-8"))
+    elif args.command == "universe-source-validate":
+        from .universe_source import validate_source_bundle
+        report = validate_source_bundle(
+            args.snapshots,
+            args.manifest,
+            expected_constituents=args.expected_constituents,
+            require_full_snapshot_size=args.require_full_snapshot_size,
+        )
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__": main()
