@@ -3,5 +3,6 @@
   "source_name": "REPLACE_WITH_AUTHORITATIVE_SOURCE",
   "source_url": "REPLACE_WITH_SOURCE_URL",
   "retrieved_at": "2026-09-14T00:00:00Z",
-  "license_or_terms": "REPLACE_WITH_SOURCE_TERMS"
+  "license_or_terms": "REPLACE_WITH_SOURCE_TERMS",
+  "source_sha256": "REPLACE_WITH_64_CHAR_SHA256"
 }
