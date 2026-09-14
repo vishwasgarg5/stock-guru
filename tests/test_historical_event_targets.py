@@ -1,6 +1,6 @@
 from pathlib import Path
 import csv
-from collections import Counter, defaultdict
+from collections import Counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,10 +10,12 @@ FILES = {
     "ind_prs01092022": ROOT / "data" / "nifty500_events_2022_09_periodic.csv",
     "ind_prs16092022": ROOT / "data" / "nifty500_events_2022_09_amalgamation.csv",
     "ind_prs17102023": ROOT / "data" / "nifty500_events_2023_10.csv",
+    "ind_prs23082024": ROOT / "data" / "nifty500_events_2024_09_final.csv",
+    "ind_prs25092024": ROOT / "data" / "nifty500_events_2024_09_final.csv",
     "ind_prs21022025": ROOT / "data" / "nifty500_events_2025_2024.csv",
     "ind_prs22082025": ROOT / "data" / "nifty500_events_2025_09.csv",
     "ind_prs15092025_1": ROOT / "data" / "nifty500_events_2025_09.csv",
-    "ind_prs11122025": ROOT / "data" / "nifty500_events_2025_09.csv",
+    "ind_prs11122025": ROOT / "data" / "nifty500_events_2025_12.csv",
     "ind_prs23022026": ROOT / "data" / "nifty500_events.csv",
 }
 
@@ -38,7 +40,7 @@ def test_verified_event_count_targets():
 
 def test_verified_event_keys_are_unique():
     seen = set()
-    for path in FILES.values():
+    for path in set(FILES.values()):
         for row in _rows(path):
             key = (row["effective_date"], row["symbol"], row["action"], row["source_id"])
             assert key not in seen, f"duplicate historical event key: {key}"
