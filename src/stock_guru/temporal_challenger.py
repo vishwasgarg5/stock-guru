@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import numpy as np
 
 
@@ -111,3 +112,36 @@ def temporal_challenger_metrics(actual: np.ndarray, predicted: np.ndarray) -> di
         "mae": float(np.mean(np.abs(error))),
         "rmse": float(np.sqrt(np.mean(error ** 2))),
     }
+
+
+def should_promote_temporal_challenger(
+    champion: dict | None,
+    challenger: dict,
+    min_samples: int = 100,
+    min_rmse_improvement: float = 0.01,
+) -> bool:
+    """Return whether an evaluated temporal challenger clears a conservative gate.
+
+    This is only a decision helper. It does not mutate or promote any production
+    artifact; callers must still use the repository's champion/promotion workflow.
+    """
+    if min_samples <= 0:
+        raise ValueError("min_samples must be positive")
+    if not 0.0 <= min_rmse_improvement < 1.0:
+        raise ValueError("min_rmse_improvement must be in [0, 1)")
+    try:
+        samples = int(challenger["samples"])
+        rmse = float(challenger["rmse"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if samples < min_samples or not math.isfinite(rmse) or rmse < 0:
+        return False
+    if champion is None:
+        return True
+    try:
+        champion_rmse = float(champion["rmse"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not math.isfinite(champion_rmse) or champion_rmse < 0:
+        return False
+    return rmse <= champion_rmse * (1.0 - min_rmse_improvement)
