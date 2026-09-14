@@ -66,113 +66,65 @@ def main() -> None:
     bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--fundamentals", default=None); bt.add_argument("--universe", default=None); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
     uh = sub.add_parser("universe-history", help="Build PIT universe intervals from an authoritative baseline and event ledger")
-    uh.add_argument("--baseline", required=True, help="CSV containing exactly one as_of date and symbol column")
-    uh.add_argument("--events", required=True, help="Provenance-bearing event CSV")
-    uh.add_argument("--output", default="data/nifty500_universe_history.csv")
+    uh.add_argument("--baseline", required=True); uh.add_argument("--events", required=True); uh.add_argument("--output", default="data/nifty500_universe_history.csv")
     uq = sub.add_parser("universe-quality", help="Report PIT universe coverage without assuming historical completeness")
-    uq.add_argument("--snapshots", required=True, help="CSV containing as_of and symbol columns")
-    uq.add_argument("--events", default=None, help="Optional provenance-bearing event CSV")
-    uq.add_argument("--manifest", default=None, help="Optional JSON provenance manifest for the snapshot source")
-    uq.add_argument("--output", default="artifacts/universe_quality.json")
+    uq.add_argument("--snapshots", required=True); uq.add_argument("--events", default=None); uq.add_argument("--manifest", default=None); uq.add_argument("--output", default="artifacts/universe_quality.json")
     us = sub.add_parser("universe-source-validate", help="Validate historical universe snapshots and provenance manifest")
-    us.add_argument("--snapshots", required=True, help="Historical snapshot CSV with as_of and symbol columns")
-    us.add_argument("--manifest", required=True, help="JSON provenance manifest for the snapshot source")
-    us.add_argument("--expected-constituents", type=int, default=None)
-    us.add_argument("--require-full-snapshot-size", action="store_true")
-    us.add_argument("--gap-threshold-days", type=int, default=None)
+    us.add_argument("--snapshots", required=True); us.add_argument("--manifest", required=True); us.add_argument("--expected-constituents", type=int, default=None); us.add_argument("--require-full-snapshot-size", action="store_true"); us.add_argument("--gap-threshold-days", type=int, default=None)
     ua = sub.add_parser("universe-audit", help="Fingerprint and audit a validated historical universe source")
-    ua.add_argument("--snapshots", required=True)
-    ua.add_argument("--manifest", required=True)
-    ua.add_argument("--expected-constituents", type=int, default=None)
-    ua.add_argument("--require-full-snapshot-size", action="store_true")
-    ua.add_argument("--gap-threshold-days", type=int, default=None)
-    ua.add_argument("--output", default="artifacts/universe_source_audit.json")
+    ua.add_argument("--snapshots", required=True); ua.add_argument("--manifest", required=True); ua.add_argument("--expected-constituents", type=int, default=None); ua.add_argument("--require-full-snapshot-size", action="store_true"); ua.add_argument("--gap-threshold-days", type=int, default=None); ua.add_argument("--output", default="artifacts/universe_source_audit.json")
+    ea = sub.add_parser("event-audit", help="Audit provenance, completeness gates, and duplicate protection for the historical event chain")
+    ea.add_argument("--manifest", default="data/nifty500_event_chain_manifest.csv")
+    ea.add_argument("--output", default="artifacts/event_chain_audit.json")
     args = parser.parse_args()
 
     if args.command == "download":
         from .data import download_nifty500_prices
-        path = download_nifty500_prices(start=args.start, end=args.end, output=args.output)
-        print(f"saved {path}")
+        path = download_nifty500_prices(start=args.start, end=args.end, output=args.output); print(f"saved {path}")
     elif args.command == "train":
-        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
-        pipe = Pipeline().train(data, fundamentals=fundamentals, universe_intervals=universe)
-        save_model(pipe, args.model_dir, trained_through=data["date"].max(), pit_context={"fundamentals_supplied": fundamentals is not None, "universe_intervals_supplied": universe is not None})
-        print(f"trained; features={len(pipe.features)}")
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); pipe = Pipeline().train(data, fundamentals=fundamentals, universe_intervals=universe); save_model(pipe, args.model_dir, trained_through=data["date"].max(), pit_context={"fundamentals_supplied": fundamentals is not None, "universe_intervals_supplied": universe is not None}); print(f"trained; features={len(pipe.features)}")
     elif args.command == "predict":
         from .features import build_features
         from .ranker import StockRanker
         from .ohlc import OHLCForecaster
-        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); prepared = Pipeline._prepare(data, universe); feat_data, features = build_features(prepared, fundamentals)
-        ranker = StockRanker.load(str(Path(args.model_dir) / "ranker.joblib")); forecaster = OHLCForecaster.load(str(Path(args.model_dir) / "ohlc.joblib"))
-        metadata_path = Path(args.model_dir) / "model_metadata.json"
-        model_version = "unknown"
-        if metadata_path.exists(): model_version = json.loads(metadata_path.read_text(encoding="utf-8")).get("model_version", model_version)
-        day = feat_data[feat_data.date.astype(str).str[:10] == args.date].dropna(subset=features)
-        ranked = ranker.score(day).head(args.top_k); pred = forecaster.predict(ranked); pred["rank"] = range(1, len(pred) + 1); pred["model_version"] = model_version
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True); pred.to_csv(args.output, index=False); print(pred.to_string(index=False))
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); prepared = Pipeline._prepare(data, universe); feat_data, features = build_features(prepared, fundamentals); ranker = StockRanker.load(str(Path(args.model_dir) / "ranker.joblib")); forecaster = OHLCForecaster.load(str(Path(args.model_dir) / "ohlc.joblib")); metadata_path = Path(args.model_dir) / "model_metadata.json"; model_version = "unknown" if not metadata_path.exists() else json.loads(metadata_path.read_text(encoding="utf-8")).get("model_version", "unknown"); day = feat_data[feat_data.date.astype(str).str[:10] == args.date].dropna(subset=features); ranked = ranker.score(day).head(args.top_k); pred = forecaster.predict(ranked); pred["rank"] = range(1, len(pred) + 1); pred["model_version"] = model_version; Path(args.output).parent.mkdir(parents=True, exist_ok=True); pred.to_csv(args.output, index=False); print(pred.to_string(index=False))
     elif args.command == "feedback":
         from .feedback import label_predictions, append_feedback
         from .model_selection import summarize_feedback
-        predictions = pd.read_csv(args.predictions)
-        if "date" in predictions.columns: predictions["date"] = pd.to_datetime(predictions["date"])
-        elif "prediction_date" in predictions.columns: predictions["prediction_date"] = pd.to_datetime(predictions["prediction_date"])
-        else: raise ValueError("Predictions must contain date or prediction_date")
-        market = load(args.prices)
-        labeled = label_predictions(predictions, market)
+        predictions = pd.read_csv(args.predictions); predictions["date"] = pd.to_datetime(predictions["date"] if "date" in predictions.columns else predictions["prediction_date"]); market = load(args.prices); labeled = label_predictions(predictions, market); 
         if labeled.empty: raise RuntimeError("No next-day actuals matched the stored predictions")
-        append_feedback(args.output, labeled)
-        current_metrics = evaluate(labeled)
-        cumulative_feedback = pd.read_csv(args.output)
-        feedback_summary = summarize_feedback(cumulative_feedback, min_rows=1)
-        metrics = {"current_batch": current_metrics, "cumulative": feedback_summary}
-        Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True); Path(args.metrics_output).write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8"); print(metrics)
+        append_feedback(args.output, labeled); metrics = {"current_batch": evaluate(labeled), "cumulative": summarize_feedback(pd.read_csv(args.output), min_rows=1)}; Path(args.metrics_output).parent.mkdir(parents=True, exist_ok=True); Path(args.metrics_output).write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8"); print(metrics)
     elif args.command == "retrain":
         from .model_selection import evaluate_candidate, should_promote, save_metrics, summarize_feedback
-        data = load(args.prices); model_dir = Path(args.model_dir)
-        candidate_metrics = evaluate_candidate(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k)
-        feedback_summary = None
-        if args.feedback and Path(args.feedback).exists(): feedback_summary = summarize_feedback(pd.read_csv(args.feedback))
-        metrics_path = model_dir / "walk_forward_metrics.json"
-        old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None
-        accepted = should_promote(old_metrics, candidate_metrics, feedback=feedback_summary)
-        decision = {"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics, "feedback": feedback_summary}
+        data = load(args.prices); model_dir = Path(args.model_dir); candidate_metrics = evaluate_candidate(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k); feedback_summary = summarize_feedback(pd.read_csv(args.feedback)) if args.feedback and Path(args.feedback).exists() else None; metrics_path = model_dir / "walk_forward_metrics.json"; old_metrics = json.loads(metrics_path.read_text(encoding="utf-8")) if metrics_path.exists() else None; accepted = should_promote(old_metrics, candidate_metrics, feedback=feedback_summary); decision = {"accepted": accepted, "candidate": candidate_metrics, "previous": old_metrics, "feedback": feedback_summary};
         if accepted:
-            cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max()
-            training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy()
+            cutoff = pd.Timestamp(args.prediction_date).normalize() if args.prediction_date else pd.to_datetime(data["date"]).dt.normalize().max(); training = data[pd.to_datetime(data["date"]).dt.normalize() < cutoff].copy();
             if training.empty: raise ValueError("No historical sessions remain before the retraining prediction date")
             final_pipe = Pipeline(top_k=args.top_k).train(training); save_model(final_pipe, args.model_dir, trained_through=training["date"].max(), validation_metrics=candidate_metrics); save_metrics(args.model_dir, candidate_metrics); decision["trained_through"] = str(training["date"].max().date())
         else: decision["reason"] = "candidate rejected; existing model retained"
-        if args.decision_output:
-            output = Path(args.decision_output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(decision, indent=2, default=str), encoding="utf-8")
+        if args.decision_output: output = Path(args.decision_output); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(decision, indent=2, default=str), encoding="utf-8")
         else: print(json.dumps(decision, indent=2, default=str))
     elif args.command == "backtest":
         from .walk_forward_backtest import run_strategy_walk_forward
         from .reporting import save_backtest_report
-        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
-        result = run_strategy_walk_forward(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps, fundamentals=fundamentals, universe_intervals=universe)
-        paths = save_backtest_report(result, args.output_dir); print(json.dumps({"portfolio": result["portfolio"], "files": paths, "pit_context": result.get("pit_context", {})}, indent=2, default=str))
+        data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe); result = run_strategy_walk_forward(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps, fundamentals=fundamentals, universe_intervals=universe); print(json.dumps({"portfolio": result["portfolio"], "files": save_backtest_report(result, args.output_dir), "pit_context": result.get("pit_context", {})}, indent=2, default=str))
     elif args.command == "evaluate": print(evaluate(pd.read_csv(args.predictions)))
+    elif args.command == "event-audit":
+        from .event_audit import audit_event_chain, save_event_audit
+        report = audit_event_chain(args.manifest); save_event_audit(args.manifest, args.output); print(json.dumps(report, indent=2))
     elif args.command == "universe-history":
         from .universe_events import build_universe_history_from_events
-        path = build_universe_history_from_events(args.baseline, args.events, args.output)
-        print(f"saved {path}")
+        print(f"saved {build_universe_history_from_events(args.baseline, args.events, args.output)}")
     elif args.command == "universe-quality":
         from .universe_coverage import save_coverage_report
         from .universe_source import load_source_manifest
-        snapshots = pd.read_csv(args.snapshots)
-        events = pd.read_csv(args.events) if args.events else None
-        manifest = load_source_manifest(args.manifest) if args.manifest else None
-        output = save_coverage_report(snapshots, args.output, events, source_manifest=manifest)
-        print(output.read_text(encoding="utf-8"))
+        snapshots = pd.read_csv(args.snapshots); events = pd.read_csv(args.events) if args.events else None; manifest = load_source_manifest(args.manifest) if args.manifest else None; output = save_coverage_report(snapshots, args.output, events, source_manifest=manifest); print(output.read_text(encoding="utf-8"))
     elif args.command == "universe-source-validate":
         from .universe_source import validate_source_bundle
-        report = validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days)
-        print(json.dumps(report, indent=2))
+        print(json.dumps(validate_source_bundle(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days), indent=2))
     elif args.command == "universe-audit":
         from .universe_audit import build_source_audit, save_source_audit
-        report = build_source_audit(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days)
-        output = save_source_audit(report, args.output)
-        print(output.read_text(encoding="utf-8"))
+        report = build_source_audit(args.snapshots, args.manifest, expected_constituents=args.expected_constituents, require_full_snapshot_size=args.require_full_snapshot_size, gap_threshold_days=args.gap_threshold_days); output = save_source_audit(report, args.output); print(output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__": main()
