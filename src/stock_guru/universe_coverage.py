@@ -75,20 +75,47 @@ def summarize_events(events: pd.DataFrame) -> dict[str, object]:
     }
 
 
-def build_coverage_report(snapshots: pd.DataFrame, events: pd.DataFrame | None = None) -> dict:
+def build_coverage_report(
+    snapshots: pd.DataFrame,
+    events: pd.DataFrame | None = None,
+    *,
+    source_manifest: dict | None = None,
+) -> dict:
     """Build a machine-readable report; no completeness is inferred."""
     coverage = summarize_snapshots(snapshots)
     report = asdict(coverage)
     if events is not None:
         report.update(summarize_events(events))
+    if source_manifest is not None:
+        required = {"dataset", "source_name", "source_url", "retrieved_at", "license_or_terms"}
+        missing = required - set(source_manifest)
+        if missing:
+            raise ValueError(f"Missing source manifest fields: {sorted(missing)}")
+        report["source"] = {
+            "dataset": source_manifest["dataset"],
+            "source_name": source_manifest["source_name"],
+            "source_url": source_manifest["source_url"],
+            "retrieved_at": source_manifest["retrieved_at"],
+        }
+        report["provenance_validated"] = True
+    else:
+        report["provenance_validated"] = False
     report["historical_completeness"] = "unknown"
     report["provenance_required"] = True
     return report
 
 
-def save_coverage_report(snapshots: pd.DataFrame, output_path: str | Path,
-                         events: pd.DataFrame | None = None) -> Path:
+def save_coverage_report(
+    snapshots: pd.DataFrame,
+    output_path: str | Path,
+    events: pd.DataFrame | None = None,
+    *,
+    source_manifest: dict | None = None,
+) -> Path:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(build_coverage_report(snapshots, events), indent=2), encoding="utf-8")
+    output.write_text(
+        json.dumps(build_coverage_report(snapshots, events, source_manifest=source_manifest), indent=2),
+        encoding="utf-8",
+    )
     return output
