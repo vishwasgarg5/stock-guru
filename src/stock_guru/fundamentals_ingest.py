@@ -8,26 +8,25 @@ REQUIRED = {"symbol", "reported_date", "available_date"}
 
 
 def validate_pit_fundamentals(frame: pd.DataFrame) -> pd.DataFrame:
-    """Validate the canonical PIT fundamentals contract.
-
-    ``available_date`` is the first market date on which the value may be used;
-    it must never precede the report date. Duplicate symbol/available_date rows
-    are rejected so as-of joins remain deterministic. Optional value columns
-    must be numeric and finite when populated.
-    """
+    """Validate the canonical PIT fundamentals contract."""
     missing = REQUIRED - set(frame.columns)
     if missing:
         raise ValueError(f"Missing PIT fundamental columns: {sorted(missing)}")
     out = frame.copy()
     for col in ("reported_date", "available_date"):
         out[col] = pd.to_datetime(out[col], errors="coerce").dt.normalize()
-    out["symbol"] = out["symbol"].astype(str).str.strip()
+    out["symbol"] = out["symbol"].astype(str).str.strip().str.upper()
     if out["symbol"].eq("").any() or out[["reported_date", "available_date"]].isna().any().any():
         raise ValueError("PIT fundamentals contain invalid symbols or dates")
     if (out["available_date"] < out["reported_date"]).any():
         raise ValueError("available_date cannot precede reported_date")
     if out.duplicated(["symbol", "available_date"]).any():
         raise ValueError("Duplicate symbol/available_date PIT observations")
+    if {"source", "source_id"}.intersection(out.columns):
+        if not {"source", "source_id"}.issubset(out.columns):
+            raise ValueError("Fundamentals provenance requires both source and source_id")
+        if out["source"].astype(str).str.strip().eq("").any() or out["source_id"].astype(str).str.strip().eq("").any():
+            raise ValueError("Fundamentals provenance fields cannot be blank")
 
     value_columns = [c for c in out.columns if c not in REQUIRED]
     for column in value_columns:
