@@ -41,17 +41,37 @@ def summarize_snapshots(snapshots: pd.DataFrame) -> UniverseCoverage:
     )
 
 
-def summarize_events(events: pd.DataFrame) -> dict[str, int]:
-    """Count validated inclusion/exclusion events by action."""
+def _validate_events(events: pd.DataFrame) -> pd.DataFrame:
     required = {"effective_date", "symbol", "action", "source", "source_id"}
     if not required.issubset(events.columns):
         raise ValueError(f"Missing event columns: {sorted(required - set(events.columns))}")
-    actions = events["action"].astype(str).str.strip().str.lower()
-    if (~actions.isin({"include", "exclude"})).any():
+    df = events[list(required)].copy()
+    df["effective_date"] = pd.to_datetime(df["effective_date"], errors="coerce").dt.normalize()
+    for column in ("symbol", "action", "source", "source_id"):
+        df[column] = df[column].astype(str).str.strip()
+    df["action"] = df["action"].str.lower()
+    if df["effective_date"].isna().any():
+        raise ValueError("Events contain invalid effective dates")
+    if df[["symbol", "source", "source_id"]].eq("").any().any():
+        raise ValueError("Events contain blank symbol or provenance fields")
+    if (~df["action"].isin({"include", "exclude"})).any():
         raise ValueError("Events contain unsupported actions")
+    if df.duplicated(["effective_date", "symbol"]).any():
+        raise ValueError("Events contain duplicate effective_date/symbol rows")
+    return df.sort_values(["effective_date", "symbol"]).reset_index(drop=True)
+
+
+def summarize_events(events: pd.DataFrame) -> dict[str, object]:
+    """Validate and summarize provenance-bearing inclusion/exclusion events."""
+    df = _validate_events(events)
     return {
-        "inclusion_events": int(actions.eq("include").sum()),
-        "exclusion_events": int(actions.eq("exclude").sum()),
+        "event_count": int(len(df)),
+        "inclusion_events": int(df["action"].eq("include").sum()),
+        "exclusion_events": int(df["action"].eq("exclude").sum()),
+        "event_earliest_date": str(df["effective_date"].min().date()) if not df.empty else None,
+        "event_latest_date": str(df["effective_date"].max().date()) if not df.empty else None,
+        "event_unique_symbols": int(df["symbol"].nunique()),
+        "event_provenance_complete": True,
     }
 
 
