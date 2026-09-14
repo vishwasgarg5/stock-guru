@@ -44,3 +44,23 @@ def test_event_chain_audit_blocks_effective_date_mismatch(tmp_path):
     report = audit_event_chain(manifest)
     assert report["status"] == "BLOCKED"
     assert report["date_mismatches"]["x"]["observed"] == ["2024-01-02"]
+
+
+def test_event_chain_audit_blocks_duplicate_manifest_source_ids(tmp_path):
+    evidence = tmp_path / "events.csv"
+    evidence.write_text("effective_date,symbol,action,source,source_id\n2024-01-01,AAA,exclude,NSE,x\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.csv"
+    manifest.write_text(f"source_id,effective_date,evidence_file,status\nx,2024-01-01,{evidence},verified\nx,2024-01-01,{evidence},verified\n", encoding="utf-8")
+    report = audit_event_chain(manifest)
+    assert report["status"] == "BLOCKED"
+    assert report["duplicate_manifest_source_ids"] == ["x"]
+
+
+def test_event_chain_audit_blocks_unknown_event_source(tmp_path):
+    evidence = tmp_path / "events.csv"
+    evidence.write_text("effective_date,symbol,action,source,source_id\n2024-01-01,AAA,exclude,NSE,other\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.csv"
+    manifest.write_text(f"source_id,effective_date,evidence_file,status\nx,2024-01-01,{evidence},verified\n", encoding="utf-8")
+    report = audit_event_chain(manifest)
+    assert report["status"] == "BLOCKED"
+    assert report["unknown_sources"] == ["other"]
