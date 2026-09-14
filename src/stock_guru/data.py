@@ -35,6 +35,45 @@ def save_universe_snapshot(output: str = "data/universe_snapshots.csv", as_of: s
     return path
 
 
+def apply_universe_snapshots(prices: pd.DataFrame, snapshots: pd.DataFrame) -> pd.DataFrame:
+    """Keep only constituents that were known members on each price date.
+
+    Snapshots are observations, not reconstructed history: dates before the first
+    snapshot are retained unchanged because membership is genuinely unknown.
+    """
+    required_prices = {"date", "symbol"}
+    required_snapshots = {"as_of", "symbol"}
+    if not required_prices.issubset(prices.columns):
+        raise ValueError(f"Missing price columns: {sorted(required_prices - set(prices.columns))}")
+    if not required_snapshots.issubset(snapshots.columns):
+        raise ValueError(f"Missing snapshot columns: {sorted(required_snapshots - set(snapshots.columns))}")
+
+    p = prices.copy()
+    p["date"] = pd.to_datetime(p["date"]).dt.normalize()
+    s = snapshots[["as_of", "symbol"]].copy()
+    s["as_of"] = pd.to_datetime(s["as_of"]).dt.normalize()
+    s["symbol"] = s["symbol"].astype(str).str.strip()
+    s = s.drop_duplicates(["as_of", "symbol"])
+    snapshot_dates = sorted(s["as_of"].unique())
+    if not snapshot_dates:
+        return p
+
+    eligible = []
+    for snapshot_date in snapshot_dates:
+        members = set(s.loc[s["as_of"] == snapshot_date, "symbol"])
+        eligible.append((snapshot_date, members))
+
+    keep = pd.Series(True, index=p.index)
+    for i, (snapshot_date, members) in enumerate(eligible):
+        next_date = eligible[i + 1][0] if i + 1 < len(eligible) else None
+        if next_date is None:
+            mask = p["date"] >= snapshot_date
+        else:
+            mask = p["date"].ge(snapshot_date) & p["date"].lt(next_date)
+        keep.loc[mask] = p.loc[mask, "symbol"].isin(members)
+    return p.loc[keep].copy()
+
+
 def download_prices(symbols: list[str], start: str, end: str | None = None, chunk_size: int = 50) -> pd.DataFrame:
     """Download daily NSE OHLCV data through yfinance and normalize its schema."""
     rows: list[pd.DataFrame] = []
