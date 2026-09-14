@@ -40,13 +40,15 @@ def load_source_manifest(path: str | Path) -> dict:
 def validate_historical_snapshots(
     snapshots: pd.DataFrame,
     *,
-    expected_constituents: int = 500,
-    require_full_snapshot_size: bool = True,
+    expected_constituents: int | None = None,
+    require_full_snapshot_size: bool = False,
 ) -> pd.DataFrame:
     """Validate supplied historical snapshots without filling missing history.
 
-    A failed snapshot is rejected rather than repaired. This is intentional: the
-    loader must never manufacture constituents to make an index appear complete.
+    Snapshot cardinality is source-specific and may change over time. When a
+    source contract provides an expected count, it can be enforced explicitly.
+    A failed snapshot is rejected rather than repaired; the loader never
+    manufactures constituents to make an index appear complete.
     """
     clean = snapshots.copy()
     required = {"as_of", "symbol"}
@@ -61,10 +63,13 @@ def validate_historical_snapshots(
         raise ValueError("Historical snapshots contain blank symbols")
     if clean.duplicated(["as_of", "symbol"]).any():
         raise ValueError("Historical snapshots contain duplicate as_of/symbol rows")
-    counts = clean.groupby("as_of")["symbol"].nunique()
-    if require_full_snapshot_size and (counts != expected_constituents).any():
-        bad = {str(k.date()): int(v) for k, v in counts.items() if v != expected_constituents}
-        raise ValueError(f"Historical snapshots are not full NIFTY 500 sets: {bad}")
+    if require_full_snapshot_size and expected_constituents is None:
+        raise ValueError("expected_constituents is required when full snapshot size is enforced")
+    if expected_constituents is not None:
+        counts = clean.groupby("as_of")["symbol"].nunique()
+        if require_full_snapshot_size and (counts != expected_constituents).any():
+            bad = {str(k.date()): int(v) for k, v in counts.items() if v != expected_constituents}
+            raise ValueError(f"Historical snapshots are not full sets: {bad}")
     return clean.sort_values(["as_of", "symbol"]).reset_index(drop=True)
 
 
@@ -72,7 +77,8 @@ def validate_historical_snapshot_file(
     snapshot_path: str | Path,
     manifest_path: str | Path,
     *,
-    expected_constituents: int = 500,
+    expected_constituents: int | None = None,
+    require_full_snapshot_size: bool = False,
 ) -> pd.DataFrame:
     """Validate a snapshot CSV only when its provenance manifest is present."""
     load_source_manifest(manifest_path)
@@ -80,4 +86,5 @@ def validate_historical_snapshot_file(
     return validate_historical_snapshots(
         snapshots,
         expected_constituents=expected_constituents,
+        require_full_snapshot_size=require_full_snapshot_size,
     )
