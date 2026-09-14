@@ -32,18 +32,14 @@ def load_universe(path: str | None) -> pd.DataFrame | None:
         raise ValueError(f"Missing universe interval columns: {sorted(missing)}")
     for col in ("start_date", "end_date"):
         df[col] = pd.to_datetime(df[col], errors="coerce").dt.normalize()
-    if df[["start_date", "end_date"]].isna().any().any():
-        # end_date is allowed to be open-ended for the last membership interval.
-        if df["end_date"].isna().any() and df["start_date"].notna().all():
-            pass
-        else:
-            raise ValueError("Universe intervals contain invalid dates")
-    if (df["end_date"].notna() & df["start_date"].ge(df["end_date"].fillna(pd.Timestamp.max))).any():
+    if df["start_date"].isna().any():
+        raise ValueError("Universe intervals contain invalid start dates")
+    if df["end_date"].notna().any() and (df["start_date"] >= df["end_date"].fillna(pd.Timestamp.max)).any():
         raise ValueError("Universe intervals must have end_date after start_date")
     return df
 
 
-def save_model(pipe: Pipeline, model_dir: str, *, trained_through=None, validation_metrics=None, model_version=None) -> None:
+def save_model(pipe: Pipeline, model_dir: str, *, trained_through=None, validation_metrics=None, model_version=None, pit_context=None) -> None:
     out = Path(model_dir)
     out.mkdir(parents=True, exist_ok=True)
     pipe.ranker.save(str(out / "ranker.joblib"))
@@ -54,6 +50,7 @@ def save_model(pipe: Pipeline, model_dir: str, *, trained_through=None, validati
         "trained_through": str(pd.Timestamp(trained_through).date()) if trained_through is not None else None,
         "validation_metrics": validation_metrics or {},
         "features": list(pipe.features),
+        "pit_context": pit_context or {"fundamentals_supplied": False, "universe_intervals_supplied": False},
     }
     (out / "model_metadata.json").write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
 
@@ -91,7 +88,9 @@ def main() -> None:
         print(f"saved {path}")
     elif args.command == "train":
         data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
-        pipe = Pipeline().train(data, fundamentals=fundamentals, universe_intervals=universe); save_model(pipe, args.model_dir, trained_through=data["date"].max()); print(f"trained; features={len(pipe.features)}")
+        pipe = Pipeline().train(data, fundamentals=fundamentals, universe_intervals=universe)
+        save_model(pipe, args.model_dir, trained_through=data["date"].max(), pit_context={"fundamentals_supplied": fundamentals is not None, "universe_intervals_supplied": universe is not None})
+        print(f"trained; features={len(pipe.features)}")
     elif args.command == "predict":
         from .features import build_features
         from .ranker import StockRanker
@@ -144,7 +143,7 @@ def main() -> None:
         from .reporting import save_backtest_report
         data = load(args.prices); fundamentals = load_optional_csv(args.fundamentals); universe = load_universe(args.universe)
         result = run_strategy_walk_forward(data, min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps, fundamentals=fundamentals, universe_intervals=universe)
-        paths = save_backtest_report(result, args.output_dir); print(json.dumps({"portfolio": result["portfolio"], "files": paths}, indent=2, default=str))
+        paths = save_backtest_report(result, args.output_dir); print(json.dumps({"portfolio": result["portfolio"], "files": paths, "pit_context": result.get("pit_context", {})}, indent=2, default=str))
     elif args.command == "evaluate": print(evaluate(pd.read_csv(args.predictions)))
     elif args.command == "universe-history":
         from .universe_events import build_universe_history_from_events
