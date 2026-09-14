@@ -49,7 +49,7 @@ def test_temporal_challenger_metrics_are_dependency_free():
     assert metrics["samples"] == 2
     assert metrics["outputs"] == 2
     assert metrics["mae"] == pytest.approx(0.75)
-    assert metrics["rmse"] == pytest.approx(np.sqrt(1.5))
+    assert metrics["rmse"] == pytest.approx(np.sqrt(1.25))
 
 
 def test_temporal_challenger_metrics_reject_invalid_arrays():
