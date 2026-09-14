@@ -12,6 +12,15 @@ class PaperConfig:
     commission_bps: float = 10.0
     slippage_bps: float = 5.0
 
+    def validate(self) -> "PaperConfig":
+        if self.initial_capital <= 0:
+            raise ValueError("initial_capital must be positive")
+        if not 0 < self.max_position_pct <= 1:
+            raise ValueError("max_position_pct must be in (0, 1]")
+        if self.commission_bps < 0 or self.slippage_bps < 0:
+            raise ValueError("cost assumptions cannot be negative")
+        return self
+
 
 @dataclass
 class PaperPortfolio:
@@ -22,8 +31,7 @@ class PaperPortfolio:
 
     @classmethod
     def from_config(cls, config: PaperConfig) -> "PaperPortfolio":
-        if config.initial_capital <= 0:
-            raise ValueError("initial_capital must be positive")
+        config.validate()
         return cls(float(config.initial_capital), float(config.initial_capital))
 
     def mark_to_market(self, positions: pd.DataFrame, prices: pd.DataFrame) -> float:
@@ -45,14 +53,10 @@ class PaperPortfolio:
 
 def execute_signals(signals: pd.DataFrame, prices: pd.DataFrame, capital: float | None = None, config: PaperConfig | None = None) -> pd.DataFrame:
     """Execute accepted signals at the next session open and close that day."""
-    cfg = config or PaperConfig()
+    cfg = (config or PaperConfig()).validate()
     starting_cash = cfg.initial_capital if capital is None else float(capital)
     if starting_cash <= 0:
         raise ValueError("capital must be positive")
-    if not 0 < cfg.max_position_pct <= 1:
-        raise ValueError("max_position_pct must be in (0, 1]")
-    if cfg.commission_bps < 0 or cfg.slippage_bps < 0:
-        raise ValueError("cost assumptions cannot be negative")
     required = {"prediction_date", "symbol"}
     missing = required - set(signals.columns)
     if missing:
@@ -83,8 +87,6 @@ def execute_signals(signals: pd.DataFrame, prices: pd.DataFrame, capital: float 
     if s[weight_col].isna().any() or (s[weight_col] < 0).any():
         raise ValueError("Signal weights must be non-negative numbers")
 
-    # merge_asof requires the actual time key to be globally monotonic. Applying
-    # it independently per symbol also makes the grouping semantics explicit.
     future = p[["date", "symbol", "open", "close"]].rename(columns={"date": "entry_date"})
     parts = []
     for symbol, signal_part in s.groupby("symbol", sort=False):
