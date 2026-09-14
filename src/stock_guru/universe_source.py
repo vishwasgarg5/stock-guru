@@ -43,20 +43,14 @@ def validate_historical_snapshots(
     expected_constituents: int | None = None,
     require_full_snapshot_size: bool = False,
 ) -> pd.DataFrame:
-    """Validate supplied historical snapshots without filling missing history.
-
-    Snapshot cardinality is source-specific and may change over time. When a
-    source contract provides an expected count, it can be enforced explicitly.
-    A failed snapshot is rejected rather than repaired; the loader never
-    manufactures constituents to make an index appear complete.
-    """
+    """Validate supplied historical snapshots without filling missing history."""
     clean = snapshots.copy()
     required = {"as_of", "symbol"}
     missing = required - set(clean.columns)
     if missing:
         raise ValueError(f"Missing snapshot columns: {sorted(missing)}")
     clean["as_of"] = pd.to_datetime(clean["as_of"], errors="coerce").dt.normalize()
-    clean["symbol"] = clean["symbol"].astype(str).str.strip()
+    clean["symbol"] = clean["symbol"].astype(str).str.strip().str.upper()
     if clean["as_of"].isna().any():
         raise ValueError("Historical snapshots contain invalid dates")
     if clean["symbol"].eq("").any():
@@ -88,3 +82,35 @@ def validate_historical_snapshot_file(
         expected_constituents=expected_constituents,
         require_full_snapshot_size=require_full_snapshot_size,
     )
+
+
+def validate_source_bundle(
+    snapshot_path: str | Path,
+    manifest_path: str | Path,
+    *,
+    expected_constituents: int | None = None,
+    require_full_snapshot_size: bool = False,
+) -> dict[str, object]:
+    """Validate a snapshot plus its provenance and return an audit summary."""
+    manifest = load_source_manifest(manifest_path)
+    snapshots = validate_historical_snapshot_file(
+        snapshot_path,
+        manifest_path,
+        expected_constituents=expected_constituents,
+        require_full_snapshot_size=require_full_snapshot_size,
+    )
+    counts = snapshots.groupby("as_of")["symbol"].nunique()
+    return {
+        "dataset": manifest["dataset"],
+        "source_name": manifest["source_name"],
+        "source_url": manifest["source_url"],
+        "retrieved_at": manifest["retrieved_at"],
+        "snapshot_dates": int(len(counts)),
+        "earliest_date": str(snapshots["as_of"].min().date()),
+        "latest_date": str(snapshots["as_of"].max().date()),
+        "snapshot_rows": int(len(snapshots)),
+        "unique_symbols": int(snapshots["symbol"].nunique()),
+        "min_constituents": int(counts.min()),
+        "max_constituents": int(counts.max()),
+        "provenance_validated": True,
+    }
