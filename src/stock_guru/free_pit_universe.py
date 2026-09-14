@@ -4,8 +4,6 @@ from dataclasses import dataclass, asdict
 from datetime import date
 from typing import Iterable
 
-from .event_chain import apply_events
-
 
 @dataclass(frozen=True)
 class MembershipInterval:
@@ -25,26 +23,33 @@ def _ordered_events(events: Iterable[dict[str, str]], *, start_date: str | None 
     return rows
 
 
-def build_event_derived_intervals(
-    initial_symbols: set[str],
-    events: Iterable[dict[str, str]],
-    *,
-    anchor_date: str,
-    end_date: str | None = None,
-) -> list[dict[str, object]]:
-    """Reconstruct PIT membership from a public anchor snapshot and verified events.
+def _validate_events(events: Iterable[dict[str, str]]) -> list[dict[str, str]]:
+    rows = _ordered_events(events)
+    seen: set[tuple[str, str, str, str]] = set()
+    required = {"effective_date", "symbol", "action", "source_id"}
+    for row in rows:
+        if not required <= row.keys() or any(not str(row[key]).strip() for key in required):
+            raise ValueError("Event row is missing required provenance fields")
+        key = (row["effective_date"], row["symbol"].strip().upper(), row["action"], row["source_id"])
+        if key in seen:
+            raise ValueError(f"Duplicate event key: {key}")
+        if row["action"] not in {"include", "exclude"}:
+            raise ValueError(f"Unsupported action: {row['action']}")
+        date.fromisoformat(row["effective_date"])
+        seen.add(key)
+    return rows
 
-    The function is deliberately fail-closed: an invalid transition raises rather
-    than inventing a missing constituent. Every generated interval is marked
-    EVENT_DERIVED because membership after the anchor depends on primary events.
-    """
-    rows = _ordered_events(events, start_date=anchor_date, end_date=end_date)
+
+def build_event_derived_intervals(initial_symbols: set[str], events: Iterable[dict[str, str]], *, anchor_date: str, end_date: str | None = None) -> list[dict[str, object]]:
+    """Build forward intervals from an explicitly known membership anchor."""
+    date.fromisoformat(anchor_date)
+    if end_date is not None:
+        date.fromisoformat(end_date)
+    rows = _validate_events(events)
+    rows = [r for r in rows if r["effective_date"] >= anchor_date and (end_date is None or r["effective_date"] <= end_date)]
     active = {s.strip().upper() for s in initial_symbols if s.strip()}
-    open_intervals: dict[str, tuple[str, set[str]]] = {
-        symbol: (anchor_date, set()) for symbol in active
-    }
+    open_intervals: dict[str, tuple[str, set[str]]] = {symbol: (anchor_date, set()) for symbol in active}
     completed: list[MembershipInterval] = []
-
     for event in rows:
         effective = event["effective_date"]
         symbol = event["symbol"].strip().upper()
@@ -53,28 +58,62 @@ def build_event_derived_intervals(
             if symbol not in active or symbol not in open_intervals:
                 raise ValueError(f"Cannot exclude {symbol}: unsupported or invalid membership state at {effective}")
             start, sources = open_intervals.pop(symbol)
-            sources = set(sources)
-            sources.add(source_id)
-            completed.append(MembershipInterval(symbol, start, effective, "EVENT_DERIVED", tuple(sorted(sources))))
+            completed.append(MembershipInterval(symbol, start, effective, "EVENT_DERIVED", tuple(sorted(set(sources) | {source_id}))))
             active.remove(symbol)
-        elif event["action"] == "include":
+        else:
             if symbol in active:
                 raise ValueError(f"Cannot include {symbol}: already active at {effective}")
             active.add(symbol)
             open_intervals[symbol] = (effective, {source_id})
-        else:
-            raise ValueError(f"Unsupported action: {event['action']}")
-
     for symbol, (start, sources) in open_intervals.items():
-        completed.append(MembershipInterval(symbol, start, None, "EVENT_DERIVED", tuple(sorted(sources))))
+        completed.append(MembershipInterval(symbol, start, end_date, "EVENT_DERIVED", tuple(sorted(sources))))
+    return [asdict(i) for i in sorted(completed, key=lambda x: (x.symbol, x.start_date))]
 
-    return [asdict(interval) for interval in sorted(completed, key=lambda x: (x.symbol, x.start_date))]
+
+def build_reverse_event_derived_intervals(anchor_symbols: set[str], events: Iterable[dict[str, str]], *, anchor_date: str, start_date: str | None = None) -> list[dict[str, object]]:
+    """Reconstruct historical membership backwards from a known public snapshot.
+
+    The anchor is the post-event membership on ``anchor_date``. Reverse excludes
+    add a member back; reverse includes remove a member. Same-date releases are
+    reversed as one deterministic batch. Contradictory state fails closed.
+    """
+    anchor = date.fromisoformat(anchor_date)
+    lower = date.fromisoformat(start_date) if start_date is not None else None
+    if lower is not None and lower > anchor:
+        raise ValueError("start_date cannot be after anchor_date")
+    rows = [r for r in _validate_events(events) if date.fromisoformat(r["effective_date"]) <= anchor]
+    if lower is not None:
+        rows = [r for r in rows if date.fromisoformat(r["effective_date"]) >= lower]
+    active = {s.strip().upper() for s in anchor_symbols if s.strip()}
+    boundaries: dict[str, set[str]] = {anchor_date: set(active)}
+    provenance: dict[tuple[str, str], set[str]] = {}
+    for effective in sorted({r["effective_date"] for r in rows}, reverse=True):
+        batch = [r for r in rows if r["effective_date"] == effective]
+        for event in reversed(batch):
+            symbol = event["symbol"].strip().upper()
+            source_id = event["source_id"].strip()
+            if event["action"] == "exclude":
+                if symbol in active:
+                    raise ValueError(f"Cannot reverse exclude {symbol}: it is active after {effective}")
+                active.add(symbol)
+            else:
+                if symbol not in active:
+                    raise ValueError(f"Cannot reverse include {symbol}: it is inactive after {effective}")
+                active.remove(symbol)
+            provenance.setdefault((effective, symbol), set()).add(source_id)
+        boundaries[effective] = set(active)
+    ordered = sorted(boundaries)
+    intervals: list[MembershipInterval] = []
+    for idx, left in enumerate(ordered):
+        right = ordered[idx + 1] if idx + 1 < len(ordered) else None
+        for symbol in sorted(boundaries[left]):
+            source_ids = provenance.get((left, symbol), set())
+            tier = "EVENT_DERIVED" if source_ids else "BLOCKED"
+            intervals.append(MembershipInterval(symbol, left, right, tier, tuple(sorted(source_ids))))
+    return [asdict(i) for i in intervals]
 
 
-def membership_on_date(
-    intervals: Iterable[dict[str, object]],
-    target_date: str,
-) -> set[str]:
+def membership_on_date(intervals: Iterable[dict[str, object]], target_date: str) -> set[str]:
     """Return membership for a date using only explicitly reconstructed intervals."""
     target = date.fromisoformat(target_date)
     result: set[str] = set()
@@ -93,8 +132,4 @@ def audit_membership_cardinality(intervals: Iterable[dict[str, object]], dates: 
     for target in dates:
         members = membership_on_date(intervals, target)
         results.append({"as_of": target, "count": len(members), "expected": expected_size, "status": "PASS" if len(members) == expected_size else "BLOCKED"})
-    return {
-        "status": "PASS" if all(row["status"] == "PASS" for row in results) else "BLOCKED",
-        "expected_size": expected_size,
-        "dates": results,
-    }
+    return {"status": "PASS" if all(row["status"] == "PASS" for row in results) else "BLOCKED", "expected_size": expected_size, "dates": results}
