@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from .pit import join_pit_fundamentals
 from .regime import REGIME_FEATURES, add_market_regime_features
 
 BASE_FUNDAMENTALS = [
@@ -58,10 +59,15 @@ def add_targets(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    out = add_targets(add_technical_features(df.copy()))
+def build_features(
+    df: pd.DataFrame,
+    fundamentals: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Build model features, optionally attaching point-in-time fundamentals."""
+    raw = join_pit_fundamentals(df, fundamentals) if fundamentals is not None else df.copy()
+    out = add_targets(add_technical_features(raw))
     out = add_market_regime_features(out)
-    fundamentals = [c for c in BASE_FUNDAMENTALS if c in out.columns]
+    fundamental_features = [c for c in BASE_FUNDAMENTALS if c in out.columns]
     technical = [
         "ret_1d", "ret_5d", "ret_20d", "rsi_14", "volatility_20", "downside_volatility_20",
         "volume_ratio_20", "atr_pct_14",
@@ -70,8 +76,6 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         out[f"{c}_ratio"] = out[c] / out["close"] - 1
     technical += ["sma_10_ratio", "sma_20_ratio", "sma_50_ratio", "ema_20_ratio", "ema_50_ratio"]
 
-    # Let the model learn that the same stock signal can behave differently
-    # under different market conditions, using only prediction-time data.
     out["trend_regime_interaction"] = out["ret_20d"] * out["market_ret_20d"].fillna(0.0)
     out["risk_regime_interaction"] = out["volatility_20"] * out["market_volatility_20"].fillna(0.0)
     out["breadth_trend_interaction"] = out["ret_20d"] * out["market_breadth"].fillna(0.0)
@@ -79,6 +83,6 @@ def build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         "trend_regime_interaction", "risk_regime_interaction", "breadth_trend_interaction"
     ]
 
-    features = fundamentals + technical + REGIME_FEATURES + regime_interactions
+    features = fundamental_features + technical + REGIME_FEATURES + regime_interactions
     out[features] = out[features].replace([np.inf, -np.inf], np.nan)
     return out, features
