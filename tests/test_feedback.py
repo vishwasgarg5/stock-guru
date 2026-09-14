@@ -1,6 +1,7 @@
 import pandas as pd
+import pytest
 
-from stock_guru.feedback import append_feedback
+from stock_guru.feedback import append_feedback, retrain_candidate
 
 
 def _row(prediction_date, symbol, model_version, error):
@@ -35,3 +36,9 @@ def test_append_feedback_keeps_distinct_model_versions(tmp_path):
     saved = pd.read_csv(store)
     assert len(saved) == 2
     assert set(saved["model_version"]) == {"adaptive-v1", "adaptive-v2"}
+
+
+def test_retrain_candidate_rejects_invalid_validation_window():
+    raw = pd.DataFrame({"date": pd.date_range("2026-01-01", periods=300), "symbol": ["A"] * 300})
+    with pytest.raises(ValueError, match="validation_dates"):
+        retrain_candidate(raw, validation_dates=0)
