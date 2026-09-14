@@ -43,6 +43,10 @@ def main() -> None:
     rt = sub.add_parser("retrain"); rt.add_argument("--prices", required=True); rt.add_argument("--model-dir", default="artifacts"); rt.add_argument("--min-train-days", type=int, default=252); rt.add_argument("--step-days", type=int, default=20); rt.add_argument("--top-k", type=int, default=10); rt.add_argument("--prediction-date", default=None); rt.add_argument("--feedback", default=None); rt.add_argument("--decision-output", default=None)
     bt = sub.add_parser("backtest"); bt.add_argument("--prices", required=True); bt.add_argument("--output-dir", default="artifacts/backtest"); bt.add_argument("--min-train-days", type=int, default=252); bt.add_argument("--step-days", type=int, default=20); bt.add_argument("--top-k", type=int, default=10); bt.add_argument("--transaction-cost-bps", type=float, default=10.0)
     ev = sub.add_parser("evaluate"); ev.add_argument("--predictions", required=True)
+    uh = sub.add_parser("universe-history", help="Build PIT universe intervals from an authoritative baseline and event ledger")
+    uh.add_argument("--baseline", required=True, help="CSV containing exactly one as_of date and symbol column")
+    uh.add_argument("--events", required=True, help="Provenance-bearing inclusion/exclusion event CSV")
+    uh.add_argument("--output", default="data/nifty500_universe_history.csv")
     args = parser.parse_args()
 
     if args.command == "download":
@@ -104,6 +108,10 @@ def main() -> None:
         result = run_strategy_walk_forward(load(args.prices), min_train_days=args.min_train_days, step_days=args.step_days, top_k=args.top_k, transaction_cost_bps=args.transaction_cost_bps)
         paths = save_backtest_report(result, args.output_dir); print(json.dumps({"portfolio": result["portfolio"], "files": paths}, indent=2, default=str))
     elif args.command == "evaluate": print(evaluate(pd.read_csv(args.predictions)))
+    elif args.command == "universe-history":
+        from .universe_events import build_universe_history_from_events
+        path = build_universe_history_from_events(args.baseline, args.events, args.output)
+        print(f"saved {path}")
 
 
 if __name__ == "__main__": main()
