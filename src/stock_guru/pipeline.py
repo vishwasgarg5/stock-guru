@@ -5,7 +5,7 @@ import pandas as pd
 from .features import build_features
 from .ranker import StockRanker
 from .ohlc import OHLCForecaster
-from .regime import add_market_regime_features, confidence_from_rank, regime_label
+from .regime import confidence_from_rank, regime_label
 
 
 @dataclass
@@ -15,18 +15,26 @@ class Pipeline:
     forecaster: OHLCForecaster | None = None
     features: list[str] | None = None
 
-    def train(self, raw: pd.DataFrame) -> "Pipeline":
-        data, features = build_features(raw)
+    def train(
+        self,
+        raw: pd.DataFrame,
+        fundamentals: pd.DataFrame | None = None,
+    ) -> "Pipeline":
+        data, features = build_features(raw, fundamentals)
         self.features = features
         self.ranker = StockRanker().fit(data, features)
         self.forecaster = OHLCForecaster().fit(data, features)
         return self
 
-    def predict_date(self, raw: pd.DataFrame, date: str) -> pd.DataFrame:
+    def predict_date(
+        self,
+        raw: pd.DataFrame,
+        date: str,
+        fundamentals: pd.DataFrame | None = None,
+    ) -> pd.DataFrame:
         if not self.ranker or not self.forecaster or self.features is None:
             raise RuntimeError("Train the pipeline before prediction.")
-        data, _ = build_features(raw)
-        data = add_market_regime_features(data)
+        data, _ = build_features(raw, fundamentals)
         day = data[data["date"].astype(str) == str(date)].copy().dropna(subset=self.features)
         ranked = self.ranker.score(day).head(self.top_k)
         pred = self.forecaster.predict(ranked)
