@@ -72,6 +72,7 @@ def test_event_summary_rejects_blank_provenance():
 
 def test_event_summary_rejects_invalid_date():
     events = _events().copy()
+    events["effective_date"] = events["effective_date"].astype(object)
     events.loc[0, "effective_date"] = "bad-date"
     with pytest.raises(ValueError, match="invalid effective dates"):
         summarize_events(events)
