@@ -10,6 +10,7 @@ class LSTMConfig:
     hidden_size: int = 32
     epochs: int = 10
     learning_rate: float = 1e-3
+    seed: int = 42
 
 
 class LSTMChallenger:
@@ -17,6 +18,16 @@ class LSTMChallenger:
 
     def __init__(self, config: LSTMConfig | None = None):
         self.config = config or LSTMConfig()
+        if self.config.lookback <= 0:
+            raise ValueError("lookback must be positive")
+        if self.config.hidden_size <= 0:
+            raise ValueError("hidden_size must be positive")
+        if self.config.epochs <= 0:
+            raise ValueError("epochs must be positive")
+        if self.config.learning_rate <= 0:
+            raise ValueError("learning_rate must be positive")
+        if self.config.seed < 0:
+            raise ValueError("seed must be non-negative")
         self.model = None
         self.mean_: np.ndarray | None = None
         self.std_: np.ndarray | None = None
@@ -28,11 +39,16 @@ class LSTMChallenger:
             raise ValueError("sequences must be [samples, lookback, features] and targets [samples, outputs]")
         if x.shape[0] != y.shape[0] or x.shape[0] == 0 or x.shape[1] == 0 or x.shape[2] == 0 or y.shape[1] == 0:
             raise ValueError("sequences and targets must contain matching non-empty sample dimensions")
+        if not np.isfinite(x).all() or not np.isfinite(y).all():
+            raise ValueError("sequences and targets must contain only finite values")
+        if self.config.lookback != x.shape[1]:
+            raise ValueError("sequence lookback does not match LSTMConfig.lookback")
         try:
             import torch
             from torch import nn
         except ImportError as exc:
             raise RuntimeError("PyTorch is required only when evaluating the LSTM challenger") from exc
+        torch.manual_seed(self.config.seed)
         self.mean_ = x.reshape(-1, x.shape[-1]).mean(axis=0)
         self.std_ = x.reshape(-1, x.shape[-1]).std(axis=0)
         self.std_[self.std_ == 0] = 1.0
@@ -70,6 +86,10 @@ class LSTMChallenger:
         x = np.asarray(sequences, dtype=np.float32)
         if x.ndim != 3 or x.shape[2] != len(self.mean_):
             raise ValueError("sequences must be [samples, lookback, features] with the fitted feature count")
+        if x.shape[1] != self.config.lookback:
+            raise ValueError("sequence lookback does not match LSTMConfig.lookback")
+        if not np.isfinite(x).all():
+            raise ValueError("sequences must contain only finite values")
         x = (x - self.mean_) / self.std_
         self.model.eval()
         with torch.no_grad():
