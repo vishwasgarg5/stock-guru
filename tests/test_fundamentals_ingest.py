@@ -41,3 +41,37 @@ def test_pit_fundamentals_reject_blank_provenance():
     frame = pd.DataFrame({"symbol": ["TCS"], "reported_date": ["2026-01-10"], "available_date": ["2026-01-11"], "source": [""], "source_id": ["1"]})
     with pytest.raises(ValueError, match="provenance"):
         validate_pit_fundamentals(frame)
+
+
+def test_pit_fundamentals_accept_timestamp_and_versioned_restatement():
+    frame = pd.DataFrame({
+        "symbol": ["TCS", "TCS"],
+        "reported_date": ["2026-01-10", "2026-01-10"],
+        "available_date": ["2026-01-11", "2026-01-12"],
+        "available_timestamp": ["2026-01-11T09:00:00Z", "2026-01-12T10:00:00Z"],
+        "source": ["NSE", "NSE"],
+        "source_id": ["filing-1", "filing-1"],
+        "version": ["original", "restated"],
+        "eps": [2.0, 2.1],
+    })
+    out = validate_pit_fundamentals(frame)
+    assert out["version"].tolist() == ["original", "restated"]
+    assert str(out["available_timestamp"].dtype).startswith("datetime64[ns, UTC]")
+
+
+def test_pit_fundamentals_reject_invalid_source_hash():
+    frame = pd.DataFrame({
+        "symbol": ["TCS"], "reported_date": ["2026-01-10"], "available_date": ["2026-01-11"],
+        "source": ["NSE"], "source_id": ["filing-1"], "source_sha256": ["bad-hash"],
+    })
+    with pytest.raises(ValueError, match="SHA-256"):
+        validate_pit_fundamentals(frame)
+
+
+def test_pit_fundamentals_reject_timestamp_before_available_date():
+    frame = pd.DataFrame({
+        "symbol": ["TCS"], "reported_date": ["2026-01-10"], "available_date": ["2026-01-11"],
+        "available_timestamp": ["2026-01-10T23:00:00Z"],
+    })
+    with pytest.raises(ValueError, match="available_timestamp"):
+        validate_pit_fundamentals(frame)
