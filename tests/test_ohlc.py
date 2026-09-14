@@ -63,6 +63,53 @@ def test_regime_adjustment_skips_small_regimes():
     assert "bear" not in forecaster.regime_adjustments
 
 
+def test_adverse_regime_specialist_blends_at_25_percent():
+    forecaster = OHLCForecaster()
+    forecaster.features = ["feature"]
+    forecaster.models = {target: _ConstantModel(0.04) for target in TARGETS}
+    forecaster.regime_models = {
+        "bear": {target: _ConstantModel(0.08) for target in TARGETS}
+    }
+    frame = pd.DataFrame({
+        "date": [pd.Timestamp("2026-01-01")],
+        "symbol": ["AAA"],
+        "close": [100.0],
+        "feature": [1.0],
+        "market_ret_20d": [-0.04],
+        "market_volatility_20": [0.01],
+        "market_breadth": [0.40],
+    })
+
+    out = forecaster.predict(frame)
+
+    expected = 0.04 * 0.75 + 0.08 * 0.25
+    for col in ["pred_open", "pred_high", "pred_low", "pred_close"]:
+        assert out.loc[0, col] == pytest.approx(100.0 * (1.0 + expected))
+
+
+def test_specialist_is_not_used_for_neutral_regime():
+    forecaster = OHLCForecaster()
+    forecaster.features = ["feature"]
+    forecaster.models = {target: _ConstantModel(0.04) for target in TARGETS}
+    forecaster.regime_models = {
+        "bear": {target: _ConstantModel(0.08) for target in TARGETS}
+    }
+    frame = pd.DataFrame({
+        "date": [pd.Timestamp("2026-01-01")],
+        "symbol": ["AAA"],
+        "close": [100.0],
+        "feature": [1.0],
+        "market_ret_20d": [0.0],
+        "market_volatility_20": [0.01],
+        "market_breadth": [0.50],
+    })
+
+    out = forecaster.predict(frame)
+
+    for col in ["pred_open", "pred_high", "pred_low", "pred_close"]:
+        assert out.loc[0, col] == pytest.approx(104.0)
+
+
 class _ConstantModel(BaseEstimator):
     def __init__(self, value=0.0):
         self.value = value
