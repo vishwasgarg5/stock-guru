@@ -4,13 +4,14 @@ from pathlib import Path
 import pandas as pd
 from .evaluation import evaluate
 from .pipeline import Pipeline
+from .ledger import load_pending
 
 
 FEEDBACK_KEY_COLUMNS = ["prediction_date", "symbol", "model_version"]
 
 
 def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
-    """Join a prediction made for date D to the next available OHLC for that symbol."""
+    """Join each prediction to the next available session for its symbol."""
     p = predictions.copy()
     if "date" in p.columns:
         p["date"] = pd.to_datetime(p["date"]).dt.normalize()
@@ -18,8 +19,13 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
         p["prediction_date"] = pd.to_datetime(p["prediction_date"]).dt.normalize()
     else:
         raise ValueError("Predictions must contain date or prediction_date")
+    if "symbol" not in p.columns:
+        raise ValueError("Predictions must contain symbol")
 
     m = market.copy()
+    required = {"date", "symbol", "open", "high", "low", "close"}
+    if not required.issubset(m.columns):
+        raise ValueError(f"Market data missing columns: {sorted(required - set(m.columns))}")
     m["date"] = pd.to_datetime(m["date"]).dt.normalize()
     m = m.sort_values(["symbol", "date"])
     actual = m[["date", "symbol", "open", "high", "low", "close"]].copy()
@@ -28,22 +34,18 @@ def label_predictions(predictions: pd.DataFrame, market: pd.DataFrame) -> pd.Dat
         "open": "actual_open", "high": "actual_high",
         "low": "actual_low", "close": "actual_close",
     })
-
     if "date" in p.columns:
         p = p.rename(columns={"date": "prediction_date"})
-    labeled = p.merge(
-        actual.drop(columns=["date"]),
-        on=["prediction_date", "symbol"], how="inner"
-    )
+    labeled = p.merge(actual.drop(columns=["date"]), on=["prediction_date", "symbol"], how="inner")
     if "base_close" not in labeled.columns and "close" in labeled.columns:
         labeled["base_close"] = labeled["close"]
+    if "base_close" not in labeled.columns:
+        raise ValueError("Predictions must contain base_close or close")
     labeled["prediction_date"] = pd.to_datetime(labeled["prediction_date"]).dt.normalize()
     labeled["actual_return"] = labeled["actual_close"] / labeled["base_close"] - 1.0
     labeled["predicted_return"] = labeled["pred_close"] / labeled["base_close"] - 1.0
     labeled["return_error"] = labeled["actual_return"] - labeled["predicted_return"]
-    labeled["direction_correct"] = (
-        labeled["actual_return"].ge(0) == labeled["predicted_return"].ge(0)
-    )
+    labeled["direction_correct"] = labeled["actual_return"].ge(0) == labeled["predicted_return"].ge(0)
     return labeled
 
 
@@ -52,7 +54,6 @@ def score_labeled(labeled: pd.DataFrame) -> dict:
 
 
 def _feedback_keys(df: pd.DataFrame) -> pd.Series:
-    """Build a stable deduplication key for prediction feedback rows."""
     key = pd.to_datetime(df["prediction_date"]).dt.normalize().astype(str) + "|" + df["symbol"].astype(str)
     if "model_version" in df.columns:
         key = key + "|" + df["model_version"].fillna("").astype(str)
@@ -63,27 +64,33 @@ def append_feedback(store: str, labeled: pd.DataFrame) -> None:
     """Append only new prediction outcomes, deduplicated by date/symbol/model."""
     if labeled.empty:
         return
-
     path = Path(store)
     path.parent.mkdir(parents=True, exist_ok=True)
     incoming = labeled.copy()
     incoming["prediction_date"] = pd.to_datetime(incoming["prediction_date"]).dt.normalize()
-
+    if "model_version" not in incoming.columns:
+        incoming["model_version"] = "unknown"
     if path.exists():
         existing = pd.read_csv(path)
         if not existing.empty:
             existing["prediction_date"] = pd.to_datetime(existing["prediction_date"]).dt.normalize()
-            combined = pd.concat([existing, incoming], ignore_index=True, sort=False)
-        else:
-            combined = incoming
-    else:
-        combined = incoming
+            if "model_version" not in existing.columns:
+                existing["model_version"] = "unknown"
+            incoming = pd.concat([existing, incoming], ignore_index=True, sort=False)
+    incoming = incoming.drop_duplicates(subset=FEEDBACK_KEY_COLUMNS, keep="last")
+    incoming = incoming.sort_values(["prediction_date", "symbol"])
+    incoming.to_csv(path, index=False)
 
-    combined = combined.drop_duplicates(subset=FEEDBACK_KEY_COLUMNS if all(
-        col in combined.columns for col in FEEDBACK_KEY_COLUMNS
-    ) else ["prediction_date", "symbol"], keep="last")
-    combined = combined.sort_values(["prediction_date", "symbol"])
-    combined.to_csv(path, index=False)
+
+def settle_prediction_feedback(prediction_store: str, feedback_store: str, market: pd.DataFrame,
+                                as_of: str | None = None) -> pd.DataFrame:
+    """Label pending ledger rows whose next market session is now available."""
+    pending = load_pending(prediction_store, as_of=as_of)
+    if pending.empty:
+        return pending
+    labeled = label_predictions(pending, market)
+    append_feedback(feedback_store, labeled)
+    return labeled
 
 
 def retrain_candidate(raw: pd.DataFrame, validation_dates: int = 20, top_k: int = 10) -> tuple[Pipeline, dict]:
