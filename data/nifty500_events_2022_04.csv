@@ -1,0 +1,3 @@
+effective_date,symbol,action,source,source_id
+2022-04-07,SUPPETRO,exclude,https://niftyindices.com/Press_Release/ind_prs06042022.pdf,ind_prs06042022
+2022-04-07,MTARTECH,include,https://niftyindices.com/Press_Release/ind_prs06042022.pdf,ind_prs06042022
