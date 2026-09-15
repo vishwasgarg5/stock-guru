@@ -2,6 +2,8 @@ name: Acquire NSE PIT Fundamentals
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 */2 * * *"
   push:
     branches: [main]
     paths:
@@ -11,6 +13,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: nse-pit-fundamentals
+  cancel-in-progress: false
 
 jobs:
   acquire:
