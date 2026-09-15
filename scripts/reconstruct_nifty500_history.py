@@ -16,12 +16,19 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _csv_header(path: Path) -> set[str]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return set(next(csv.reader(handle), []))
+
+
 def load_verified_events(event_ledger: Path, source_log: Path) -> list[dict[str, str]]:
     events = _read_csv(event_ledger)
     sources = _read_csv(source_log)
-    if not events or not REQUIRED_EVENT_COLUMNS <= set(events[0]):
+    event_columns = set(events[0]) if events else _csv_header(event_ledger)
+    source_columns = set(sources[0]) if sources else _csv_header(source_log)
+    if not REQUIRED_EVENT_COLUMNS <= event_columns:
         raise ValueError("Event ledger is missing required columns")
-    if not sources or not REQUIRED_SOURCE_COLUMNS <= set(sources[0]):
+    if not REQUIRED_SOURCE_COLUMNS <= source_columns:
         raise ValueError("Historical source log is missing required columns")
     verified = {
         row["source_id"]
