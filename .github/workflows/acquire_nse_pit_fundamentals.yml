@@ -38,8 +38,9 @@ jobs:
           from pathlib import Path
           m=json.loads(Path('data/nse_pit_fundamentals_manifest.json').read_text())
           print(json.dumps(m, indent=2))
-          if m.get('symbols_processed', 0) != m.get('symbols_expected', 500):
-              raise SystemExit('Historical PIT acquisition is incomplete: not all 500 symbols processed')
+          expected=501
+          if m.get('symbols_processed', 0) != m.get('symbols_expected', expected) or m.get('symbols_expected') != expected:
+              raise SystemExit(f'Historical PIT acquisition is incomplete: expected {expected} official NIFTY 500 constituent rows')
           if m.get('records', 0) == 0:
               raise SystemExit('No NSE filing records were acquired')
           if m.get('symbols_with_xbrl_numeric_facts', 0) == 0:
