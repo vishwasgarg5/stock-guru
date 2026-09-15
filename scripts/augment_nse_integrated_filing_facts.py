@@ -14,6 +14,7 @@ import json
 import re
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -52,10 +53,15 @@ def first(row: dict[str, Any], *names: str) -> Any:
 
 
 def clean_url(value: Any) -> str | None:
+    """Normalize NSE URL fields, including object/list API representations."""
     if isinstance(value, dict):
-        value = first(value, "url", "href", "link", "xbrl")
+        value = first(value, "url", "href", "link", "xbrl", "xbrlFile", "xbrlFileLink")
     if isinstance(value, list):
-        value = next((x for x in value if isinstance(x, str)), None)
+        for item in value:
+            candidate = clean_url(item)
+            if candidate:
+                return candidate
+        return None
     if not isinstance(value, str):
         return None
     value = value.strip()
@@ -115,19 +121,39 @@ def normalize(payload: Any) -> list[dict[str, Any]]:
     return [x for x in payload if isinstance(x, dict)] if isinstance(payload, list) else []
 
 
-def parse_public_timestamp(value: Any) -> str:
-    """Return an ISO-like timestamp only when the source supplies a real time.
+def parse_public_timestamp(value: Any) -> tuple[str, str]:
+    """Return normalized ISO date/time only when the source supplies real time.
 
-    A date-only value is intentionally rejected for exact PIT joins; using
-    period-end or an invented midnight timestamp would introduce look-ahead.
+    Date-only values are rejected for exact PIT joins. This avoids treating
+    period-end or an invented midnight timestamp as public availability.
     """
     text = str(value or "").strip()
     if not text:
         raise ValueError("missing authoritative publication timestamp")
-    # Accept ISO timestamps and common NSE date-time strings containing HH:MM.
     if not re.search(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", text):
         raise ValueError(f"publication value has no time component: {text!r}")
-    return text
+
+    candidates = [
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+        "%d-%b-%Y %H:%M:%S", "%d-%b-%Y %H:%M",
+        "%d-%B-%Y %H:%M:%S", "%d-%B-%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M",
+    ]
+    for fmt in candidates:
+        try:
+            dt = datetime.strptime(text, fmt)
+            return dt.date().isoformat(), dt.isoformat(sep=" ")
+        except ValueError:
+            continue
+
+    # ISO timestamps with timezone/fractional seconds are retained as source text
+    # after extracting a canonical calendar date.
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)", text)
+    if iso_match:
+        return iso_match.group(1), f"{iso_match.group(1)} {iso_match.group(2)}"
+
+    raise ValueError(f"unrecognized authoritative publication timestamp: {text!r}")
 
 
 def fetch_catalog_page(s: requests.Session, symbol: str, page: int) -> tuple[list[dict[str, Any]], str]:
@@ -169,28 +195,38 @@ def fetch_symbol(symbol: str) -> tuple[list[dict[str, Any]], int]:
                 continue
             seen_filing_urls.add(filing_url)
 
-            broadcast = first(
-                row,
-                "broadcastDate", "broadcastDateTime", "broadCastDate",
-                "sort_date", "filingDate", "filing_date",
-            )
-            available_timestamp = parse_public_timestamp(broadcast)
-            period = first(row, "period_ended", "periodEnded", "periodEnd", "period")
+            # NSE's Integrated Filing table exposes BROADCAST DATE/TIME as the
+            # publication timestamp. Keep revised timestamp as a distinct version
+            # when the row explicitly identifies a revision.
+            submission_type = str(first(row, "typeOfSubmission", "submissionType", "type") or "").strip()
+            if submission_type.lower() == "revision":
+                broadcast = first(row, "revisedDate", "revisedDateTime", "revisionDate", "revised_date")
+                version = "revision"
+            else:
+                broadcast = first(row, "broadcastDate", "broadcastDateTime", "broadCastDate", "broadcast_date")
+                version = "original"
+            if not broadcast:
+                # Do not fall back to a date-only field or period-end. If NSE changes
+                # the API field name, this symbol remains blocked rather than guessed.
+                raise ValueError(f"filing record {filing_url} has no authoritative broadcast/revision timestamp")
+            available_date, available_timestamp = parse_public_timestamp(broadcast)
+
+            period = first(row, "period_ended", "periodEnded", "periodEnd", "quarterEndDate", "period")
             if not period:
                 raise ValueError(f"filing record {filing_url} has no reported period/end date")
 
             base = {
                 "symbol": symbol,
                 "reported_date": str(period),
-                "available_date": available_timestamp[:10],
+                "available_date": available_date,
                 "available_timestamp": available_timestamp,
-                "statement_type": str(first(row, "consolidated", "consolidatedNonConsolidated") or ""),
+                "statement_type": str(first(row, "consolidated", "consolidatedNonConsolidated", "consolidatedStandalone") or ""),
                 "filing_type": "Integrated Filing- Financials",
                 "source": "NSE India Integrated Filing Financials",
                 "source_id": f"nse-integrated-financials:{symbol}:{row_key[:16]}",
                 "source_url": INTEGRATED,
                 "source_sha256": catalog_hash,
-                "version": "original",
+                "version": version,
                 "metric_name": "__FILING_CATALOG__",
                 "metric_value": 1.0,
                 "currency_units": "filing-record",
@@ -226,7 +262,6 @@ def fetch_symbol(symbol: str) -> tuple[list[dict[str, Any]], int]:
                 })
                 records.append(rec)
 
-        # A full page indicates that another page may exist; a short page is terminal.
         if len(rows) < PAGE_SIZE:
             break
     else:
