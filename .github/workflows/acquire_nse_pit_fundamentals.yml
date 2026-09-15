@@ -36,7 +36,7 @@ jobs:
           python scripts/acquire_nse_pit_fundamentals.py \
             --output data/nse_pit_fundamentals_legacy.csv \
             --manifest data/nse_pit_fundamentals_legacy_manifest.json \
-            --max-workers 2
+            --max-workers 1
       - name: Acquire NSE Integrated Filing XBRL facts
         continue-on-error: true
         run: |
