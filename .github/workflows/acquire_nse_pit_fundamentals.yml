@@ -21,7 +21,7 @@ concurrency:
 jobs:
   acquire:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,7 +34,7 @@ jobs:
           python scripts/acquire_nse_pit_fundamentals.py \
             --output data/nse_pit_fundamentals.csv \
             --manifest data/nse_pit_fundamentals_manifest.json \
-            --max-workers 4
+            --max-workers 2
       - name: Validate acquired evidence
         run: |
           test -s data/nse_pit_fundamentals.csv
@@ -45,7 +45,9 @@ jobs:
           m=json.loads(Path('data/nse_pit_fundamentals_manifest.json').read_text())
           print(json.dumps(m, indent=2))
           expected=501
-          if m.get('symbols_processed', 0) != m.get('symbols_expected', expected) or m.get('symbols_expected') != expected:
+          if m.get('status') != 'complete':
+              raise SystemExit('NSE PIT acquisition is BLOCKED; refusing to certify incomplete evidence')
+          if m.get('symbols_processed', 0) != expected or m.get('symbols_expected') != expected:
               raise SystemExit(f'Historical PIT acquisition is incomplete: expected {expected} official NIFTY 500 constituent rows')
           if m.get('records', 0) == 0:
               raise SystemExit('No NSE filing records were acquired')
