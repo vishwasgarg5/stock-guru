@@ -25,12 +25,14 @@ jobs:
             --manifest data/nifty500_official_history_manifest.csv
       - name: Commit captured primary evidence
         run: |
-          if git diff --quiet -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv; then
+          set -euo pipefail
+          git status --short -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
+          if git status --porcelain -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv | grep -q .; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
+            git commit -m "Capture official NIFTY 500 history"
+            git push origin HEAD:main
+          else
             echo "No evidence changes"
-            exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
-          git commit -m "Capture official NIFTY 500 history"
-          git push
