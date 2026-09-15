@@ -3,7 +3,7 @@ name: Acquire NSE PIT Fundamentals
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 */2 * * *"
+    - cron: "19 */2 * * *"
   push:
     branches: [main]
     paths:
