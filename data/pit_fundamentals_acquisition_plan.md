@@ -1,4 +1,4 @@
-# Historical PIT fundamentals acquisition plan
+# Phase B — Historical PIT fundamentals acquisition plan
 
 ## Certification objective
 Acquire real historical company fundamentals for the NIFTY 500 universe with a defensible point-in-time availability date. The dataset must support survivorship-bias-free training and backtesting.
@@ -8,9 +8,9 @@ NSE corporate filings are the preferred primary source. NSE exposes Financial Re
 
 ## Required fields
 - symbol
-- period_end
+- reported_date / period_end
 - available_date
-- available_timestamp (when supplied)
+- available_timestamp
 - statement_type (standalone/consolidated)
 - filing_type / audited_status
 - metric_name
@@ -18,7 +18,8 @@ NSE corporate filings are the preferred primary source. NSE exposes Financial Re
 - currency / units
 - source_url
 - source_id
-- source_sha256 when the source bytes are captured
+- source_sha256 when source bytes are captured
+- version / revision identifier when supplied
 
 ## PIT rules
 1. `available_timestamp` is the earliest timestamp at which the filing was publicly available from the authoritative source.
@@ -31,7 +32,13 @@ NSE corporate filings are the preferred primary source. NSE exposes Financial Re
 ## Acquisition paths
 1. NSE Financial Results / XBRL archives.
 2. NSE Annual Report-XBRL archives where annual data is required.
-3. A licensed historical fundamentals vendor may be used if it supplies immutable filing/version identifiers and publication timestamps.
+3. A licensed historical fundamentals vendor may be used only as optional cross-check evidence, never as a required dependency for the free build.
+
+## Phase B implementation now active
+- Canonical PIT fundamentals validation already gates Step 3.
+- `scripts/audit_pit_fundamentals.py` now provides a fail-closed certification audit.
+- `tests/test_audit_pit_fundamentals.py` covers missing evidence, missing publication timestamp, valid provenance, and duplicate-version blocking.
+- The next acquisition deliverable is actual historical NSE filing evidence; no placeholder fundamentals dataset will be committed.
 
 ## Validation gates
 - source provenance manifest present
@@ -44,6 +51,4 @@ NSE corporate filings are the preferred primary source. NSE exposes Financial Re
 - unresolved gaps reported explicitly
 
 ## Current status
-BLOCKED: no complete authoritative historical PIT fundamentals dataset has been imported into the repository yet.
-
-No synthetic, interpolated, or inferred historical fundamentals may be promoted to certification evidence.
+**IN PROGRESS / BLOCKED FOR CERTIFICATION:** Phase B infrastructure is implemented, but certification remains blocked until real historical NSE filing records with publication timestamps and provenance are acquired. No synthetic, interpolated, or inferred historical fundamentals may be promoted to certification evidence.
