@@ -1,0 +1,2 @@
+dataset,source_url,sheet,source_sha256,file_sha256
+nifty500_membership_history,https://archives.nseindia.com/content/indices/IndexInclExcl.xls,Nifty 500,8869bb7c4df67403131a494a8cc65509e80828f9438bc150b506cdbf55378046,4fabaec763e8030bd1d410f9f3c2f0a7f7c16c40494f04a57e0485a71d09a7f7
