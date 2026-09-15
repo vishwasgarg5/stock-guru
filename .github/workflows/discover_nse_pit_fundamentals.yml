@@ -1,0 +1,36 @@
+name: Discover NSE PIT Fundamentals Endpoint
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install requests
+      - name: Discover authoritative endpoint
+        run: |
+          python scripts/discover_nse_pit_fundamentals_endpoint.py \
+            --output data/nse_pit_fundamentals_endpoint_discovery.json
+      - name: Commit discovery evidence
+        run: |
+          set -euo pipefail
+          git add -f data/nse_pit_fundamentals_endpoint_discovery.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --cached --quiet; then
+            echo "No discovery changes"
+          else
+            git commit -m "Record NSE PIT fundamentals endpoint discovery"
+            git push origin HEAD:main
+          fi
