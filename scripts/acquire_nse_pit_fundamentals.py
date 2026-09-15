@@ -2,8 +2,9 @@
 
 This is deliberately fail-closed: every observation keeps the NSE catalog
 broadcast timestamp, filing URL, and SHA-256 hashes. No values are invented.
-The script acquires the exchange's filing catalog plus linked XBRL documents;
-XBRL numeric facts are retained as long-form metrics.
+The official Nifty 500 constituent download currently contains 501 unique
+constituent rows; that upstream count is preserved rather than silently
+truncating one constituent.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ import requests
 NIFTY500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
 NSE_HOME = "https://www.nseindia.com/"
 CATALOG = "https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol={symbol}&period=Quarterly"
-EXPECTED_COUNT = 500
+EXPECTED_COUNT = 501
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36",
     "Accept": "application/json,text/plain,*/*",
@@ -98,11 +99,6 @@ def parse_numeric(text: str) -> float | None:
 
 
 def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
-    """Return (metric_name, context_ref, numeric_value, unit) from XML XBRL facts.
-
-    If NSE serves an XHTML wrapper, ElementTree still parses the document and
-    facts remain available as ix:nonFraction/ix:nonNumeric elements.
-    """
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
