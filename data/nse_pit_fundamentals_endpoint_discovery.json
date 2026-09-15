@@ -1,0 +1,23 @@
+{
+  "status": "discovered",
+  "source_page": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
+  "source_page_sha256": "3db1a6cbcd67c123eb7d19d35e967c3f3101dd8e333147ff1f64bd2dc2f7b8fb",
+  "script_count": 40,
+  "scripts_inspected": 39,
+  "candidate_endpoints": [
+    "https://www.nseindia.com/api/corporate-voting-results",
+    "https://www.nseindia.com/api/corporate-voting-results-details?vrSeqID=",
+    "https://www.nseindia.com/api/corporate-voting-results?index=sme",
+    "https://www.nseindia.com/api/corporates-financial-results",
+    "https://www.nseindia.com/api/corporates-financial-results-data",
+    "https://www.nseindia.com/api/corporates-financial-results?index=debt&fo_sec=true&period=Quarterly&csv=true",
+    "https://www.nseindia.com/api/corporates-financial-results?index=equities&fo_sec=true&period=Quarterly&csv=true",
+    "https://www.nseindia.com/api/corporates-financial-results?index=insurance&fo_sec=true&period=Quarterly&csv=true",
+    "https://www.nseindia.com/api/corporates-financial-results?index=reitsinvits&period=Quarterly&csv=true",
+    "https://www.nseindia.com/api/corporates-financial-results?index=sme&fo_sec=true&period=Half-Yearly&csv=true"
+  ],
+  "errors": [
+    "https://www.nseindia.com/assets/js/jquery.pmCustomScrollbar.min.js?v=10092026: 404 Client Error: Not Found for url: https://www.nseindia.com/assets/js/jquery.pmCustomScrollbar.min.js?v=10092026"
+  ],
+  "policy": "No endpoint or filing data is inferred; absence of a discovered authoritative endpoint is BLOCKED."
+}
