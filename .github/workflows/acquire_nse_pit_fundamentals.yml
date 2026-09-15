@@ -67,29 +67,36 @@ jobs:
               w.writerows(rows)
           lm = json.loads(Path('data/nse_pit_fundamentals_legacy_manifest.json').read_text()) if Path('data/nse_pit_fundamentals_legacy_manifest.json').exists() else {}
           im = json.loads(Path('data/nse_pit_fundamentals_integrated_manifest.json').read_text()) if Path('data/nse_pit_fundamentals_integrated_manifest.json').exists() else {}
-          numeric_symbols = set()
-          for m in (lm, im):
-              if m.get('symbols_with_xbrl_numeric_facts', 0):
-                  if m is lm:
-                      # Legacy manifest does not list symbols; infer them from parsed rows.
-                      pass
-          for r in rows:
-              if r.get('xbrl_parse_status') == 'parsed' and r.get('metric_name') != '__FILING_CATALOG__':
-                  numeric_symbols.add(r.get('symbol'))
-          processed = set()
-          for m in (lm, im):
-              processed.update(range(m.get('symbols_processed', 0)))
+          numeric_symbols = {
+              r.get('symbol') for r in rows
+              if r.get('xbrl_parse_status') == 'parsed'
+              and r.get('metric_name') != '__FILING_CATALOG__'
+              and r.get('symbol')
+          }
+          legacy_ok = (
+              lm.get('status') == 'complete'
+              and lm.get('symbols_processed') == expected
+              and not lm.get('errors')
+          )
+          integrated_ok = (
+              im.get('status') == 'complete'
+              and im.get('symbols_processed') == expected
+              and not im.get('errors')
+          )
           manifest = {
-              'status': 'complete' if len(processed) == expected and len(numeric_symbols) > 0 and not (lm.get('errors') or False) else 'blocked',
+              'status': 'complete' if legacy_ok and integrated_ok and numeric_symbols else 'blocked',
               'source': 'NSE India Financial Results + Integrated Filing + linked NSE XBRL/iXBRL',
               'nifty500_source_url': 'https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv',
               'symbols_expected': expected,
-              'symbols_processed': max(lm.get('symbols_processed', 0), im.get('symbols_processed', 0)),
+              'symbols_processed': min(lm.get('symbols_processed', 0), im.get('symbols_processed', 0)),
               'records': len(rows),
               'symbols_with_xbrl_numeric_facts': len(numeric_symbols),
               'legacy_manifest': lm,
               'integrated_manifest': im,
-              'errors': (lm.get('errors') or []),
+              'errors': {
+                  'legacy': lm.get('errors') or [],
+                  'integrated': im.get('errors') or {},
+              },
               'policy': 'Missing publication evidence or unavailable filings remain BLOCKED; no synthetic values are permitted.'
           }
           Path('data/nse_pit_fundamentals_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
