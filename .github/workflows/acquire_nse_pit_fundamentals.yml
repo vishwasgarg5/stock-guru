@@ -1,0 +1,60 @@
+name: Acquire NSE PIT Fundamentals
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/acquire_nse_pit_fundamentals.py"
+      - "data/nifty500_official_history.csv"
+      - ".github/workflows/acquire_nse_pit_fundamentals.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Acquire real NSE filings and XBRL facts
+        run: |
+          set +e
+          python scripts/acquire_nse_pit_fundamentals.py \
+            --output data/nse_pit_fundamentals.csv \
+            --manifest data/nse_pit_fundamentals_manifest.json \
+            --max-workers 8
+          status=$?
+          echo "acquisition_status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Validate acquired evidence
+        run: |
+          test -s data/nse_pit_fundamentals.csv
+          test -s data/nse_pit_fundamentals_manifest.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('data/nse_pit_fundamentals_manifest.json').read_text())
+          print(json.dumps(m, indent=2))
+          if m.get('symbols_processed', 0) == 0:
+              raise SystemExit('No symbols were processed')
+          if m.get('records', 0) == 0:
+              raise SystemExit('No NSE filing records were acquired')
+          PY
+      - name: Commit acquired evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/nse_pit_fundamentals.csv data/nse_pit_fundamentals_manifest.json
+          if git diff --cached --quiet; then
+            echo "No evidence changes"
+          else
+            git commit -m "Acquire NSE PIT fundamentals evidence"
+            git push
+          fi
