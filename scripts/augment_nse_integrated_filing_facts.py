@@ -1,8 +1,8 @@
 """Augment NSE PIT evidence with the post-2024 Integrated Filing feed.
 
-NSE moved financial results to /api/integrated-filing-results. This script is
-an additive fallback: it never invents values and reuses the same XBRL parser
-and provenance fields as the legacy acquisition path.
+This path is deliberately fail-closed: a filing that cannot be identified,
+retrieved, timestamped, or parsed is recorded as an error rather than silently
+skipped. No values are inferred or synthesized.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ from acquire_nse_pit_fundamentals import (
 )
 
 INTEGRATED = "https://www.nseindia.com/api/integrated-filing-results"
+PAGE_SIZE = 100
+MAX_PAGES = 50
 FIELDS = [
     "symbol", "reported_date", "available_date", "available_timestamp",
     "statement_type", "filing_type", "source", "source_id", "source_url",
@@ -112,50 +115,123 @@ def normalize(payload: Any) -> list[dict[str, Any]]:
     return [x for x in payload if isinstance(x, dict)] if isinstance(payload, list) else []
 
 
+def parse_public_timestamp(value: Any) -> str:
+    """Return an ISO-like timestamp only when the source supplies a real time.
+
+    A date-only value is intentionally rejected for exact PIT joins; using
+    period-end or an invented midnight timestamp would introduce look-ahead.
+    """
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError("missing authoritative publication timestamp")
+    # Accept ISO timestamps and common NSE date-time strings containing HH:MM.
+    if not re.search(r"\b\d{1,2}:\d{2}(?::\d{2})?\b", text):
+        raise ValueError(f"publication value has no time component: {text!r}")
+    return text
+
+
+def fetch_catalog_page(s: requests.Session, symbol: str, page: int) -> tuple[list[dict[str, Any]], str]:
+    params = {
+        "index": "equities",
+        "symbol": symbol,
+        "type": "Integrated Filing- Financials",
+        "page": page,
+        "size": PAGE_SIZE,
+    }
+    r = get_with_retry(s, INTEGRATED, params=params, timeout=60)
+    return normalize(r.json()), sha256_bytes(r.content)
+
+
 def fetch_symbol(symbol: str) -> tuple[list[dict[str, Any]], int]:
     s = worker_session()
-    params = {"index": "equities", "symbol": symbol, "type": "Integrated Filing- Financials", "page": 1, "size": 100}
-    r = get_with_retry(s, INTEGRATED, params=params, timeout=60)
-    catalog_hash = sha256_bytes(r.content)
-    rows = normalize(r.json())
     records: list[dict[str, Any]] = []
     docs = 0
-    for row in rows:
-        filing_url = clean_url(first(row, "xbrl", "xbrlFile", "xbrlFileLink", "xbrl_url"))
-        if not filing_url:
-            continue
-        broadcast = first(row, "broadcastDate", "broadcastDateTime", "broadCastDate", "sort_date", "filingDate", "filing_date")
-        period = first(row, "period_ended", "periodEnded", "periodEnd", "period")
-        base = {
-            "symbol": symbol,
-            "reported_date": str(period or ""),
-            "available_date": str(broadcast or "")[:10],
-            "available_timestamp": str(broadcast or ""),
-            "statement_type": str(first(row, "consolidated", "consolidatedNonConsolidated") or ""),
-            "filing_type": "Integrated Filing- Financials",
-            "source": "NSE India Integrated Filing Financials",
-            "source_id": f"nse-integrated-financials:{symbol}:{hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()[:16]}",
-            "source_url": INTEGRATED,
-            "source_sha256": catalog_hash,
-            "version": "original",
-            "metric_name": "__FILING_CATALOG__",
-            "metric_value": 1.0,
-            "currency_units": "filing-record",
-            "period_metadata_json": json.dumps(row, sort_keys=True, default=str),
-        }
-        try:
-            xr = get_with_retry(s, filing_url, timeout=60)
-            xhash = sha256_bytes(xr.content)
-            facts = parse_xbrl(xr.content)
-        except requests.RequestException:
-            continue
-        if not facts:
-            continue
-        docs += 1
-        for metric, context, value, unit in facts:
-            rec = dict(base)
-            rec.update({"metric_name": metric, "metric_value": value, "currency_units": unit or "", "xbrl_url": filing_url, "xbrl_sha256": xhash, "xbrl_context_ref": context, "xbrl_parse_status": "parsed"})
-            records.append(rec)
+    seen_catalog_rows: set[str] = set()
+    seen_filing_urls: set[str] = set()
+    pages_seen = 0
+
+    for page in range(1, MAX_PAGES + 1):
+        rows, catalog_hash = fetch_catalog_page(s, symbol, page)
+        pages_seen += 1
+        if not rows:
+            break
+
+        for row in rows:
+            row_key = hashlib.sha256(json.dumps(row, sort_keys=True, default=str).encode()).hexdigest()
+            if row_key in seen_catalog_rows:
+                continue
+            seen_catalog_rows.add(row_key)
+
+            filing_url = clean_url(first(row, "xbrl", "xbrlFile", "xbrlFileLink", "xbrl_url"))
+            if not filing_url:
+                raise ValueError(f"filing record has no authoritative XBRL/iXBRL URL on page {page}")
+            if filing_url in seen_filing_urls:
+                continue
+            seen_filing_urls.add(filing_url)
+
+            broadcast = first(
+                row,
+                "broadcastDate", "broadcastDateTime", "broadCastDate",
+                "sort_date", "filingDate", "filing_date",
+            )
+            available_timestamp = parse_public_timestamp(broadcast)
+            period = first(row, "period_ended", "periodEnded", "periodEnd", "period")
+            if not period:
+                raise ValueError(f"filing record {filing_url} has no reported period/end date")
+
+            base = {
+                "symbol": symbol,
+                "reported_date": str(period),
+                "available_date": available_timestamp[:10],
+                "available_timestamp": available_timestamp,
+                "statement_type": str(first(row, "consolidated", "consolidatedNonConsolidated") or ""),
+                "filing_type": "Integrated Filing- Financials",
+                "source": "NSE India Integrated Filing Financials",
+                "source_id": f"nse-integrated-financials:{symbol}:{row_key[:16]}",
+                "source_url": INTEGRATED,
+                "source_sha256": catalog_hash,
+                "version": "original",
+                "metric_name": "__FILING_CATALOG__",
+                "metric_value": 1.0,
+                "currency_units": "filing-record",
+                "period_metadata_json": json.dumps(row, sort_keys=True, default=str),
+                "xbrl_url": filing_url,
+                "xbrl_sha256": "",
+                "xbrl_context_ref": "",
+                "xbrl_parse_status": "pending",
+            }
+            try:
+                xr = get_with_retry(s, filing_url, timeout=60)
+                xhash = sha256_bytes(xr.content)
+            except requests.RequestException as exc:
+                raise RuntimeError(f"XBRL download failed for {filing_url}: {exc}") from exc
+
+            try:
+                facts = parse_xbrl(xr.content)
+            except Exception as exc:
+                raise RuntimeError(f"XBRL parse failed for {filing_url}: {exc}") from exc
+            if not facts:
+                raise ValueError(f"XBRL document contained no numeric facts: {filing_url}")
+
+            docs += 1
+            for metric, context, value, unit in facts:
+                rec = dict(base)
+                rec.update({
+                    "metric_name": metric,
+                    "metric_value": value,
+                    "currency_units": unit or "",
+                    "xbrl_sha256": xhash,
+                    "xbrl_context_ref": context,
+                    "xbrl_parse_status": "parsed",
+                })
+                records.append(rec)
+
+        # A full page indicates that another page may exist; a short page is terminal.
+        if len(rows) < PAGE_SIZE:
+            break
+    else:
+        raise RuntimeError(f"pagination exceeded {MAX_PAGES} pages for {symbol}")
+
     return records, docs
 
 
@@ -186,6 +262,7 @@ def main() -> int:
                 print(f"integrated processed {i}/{len(syms)}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.manifest.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS)
         w.writeheader()
@@ -202,7 +279,8 @@ def main() -> int:
         "symbols_with_xbrl_numeric_facts": sum(v > 0 for v in stats.values()),
         "symbols_without_numeric_facts": [s for s, v in sorted(stats.items()) if v == 0],
         "errors": errors,
-        "policy": "Missing publication evidence or unavailable filings remain BLOCKED; no synthetic values are permitted.",
+        "pagination": {"page_size": PAGE_SIZE, "max_pages": MAX_PAGES},
+        "policy": "Missing publication evidence, unavailable filings, missing XBRL URLs, failed downloads, failed parses, or date-only publication values remain BLOCKED; no synthetic values are permitted.",
     }
     args.manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
