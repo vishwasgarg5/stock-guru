@@ -35,7 +35,11 @@ def test_reconstruction_uses_snapshot_as_explicit_anchor(tmp_path: Path):
     intervals = reconstruct(snapshot, events, sources)
     assert len(intervals) == 500
     assert all(row["start_date"] == "2026-02-01" for row in intervals)
-    assert all(row["evidence_tier"] == "EVENT_DERIVED" for row in intervals)
+    # A snapshot-only interval is directly certified by the authoritative
+    # anchor; EVENT_DERIVED is reserved for intervals established through
+    # verified membership events.
+    assert all(row["evidence_tier"] == "CERTIFIED" for row in intervals)
+    assert all(not row["source_ids"] for row in intervals)
 
 
 def test_reconstruction_does_not_fabricate_pre_event_history(tmp_path: Path):
