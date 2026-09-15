@@ -1,7 +1,7 @@
 {
   "status": "discovered",
   "source_page": "https://www.nseindia.com/companies-listing/corporate-filings-financial-results",
-  "source_page_sha256": "08ac962bc98692af9a0f5535c69679a8824cd4c162e91c5aaea73efdc3926a4e",
+  "source_page_sha256": "6736b62132ee199545288116330fcfed720123ace511dcd66851f00473975ca5",
   "script_count": 40,
   "scripts_inspected": 39,
   "candidate_endpoints": [
