@@ -79,6 +79,8 @@ def first(row: dict[str, Any], *names: str) -> Any:
 
 
 def clean_url(value: Any) -> str | None:
+    if isinstance(value, dict):
+        value = first(value, "url", "href", "link")
     if not value or not isinstance(value, str):
         return None
     value = value.strip()
@@ -106,36 +108,59 @@ def parse_numeric(text: str) -> float | None:
         return None
 
 
-def _ixbrl_elements(root: Any) -> list[Any]:
+def _fact_elements(root: Any) -> list[Any]:
+    """Return actual numeric XBRL/iXBRL facts.
+
+    NSE filings exist in two forms. iXBRL HTML uses ix:nonFraction, while
+    older/legacy XBRL documents use taxonomy elements such as
+    in-capmkt:RevenueFromOperations with contextRef/unitRef attributes.
+    Restricting parsing to nonFraction misses the latter and can produce a
+    false zero-facts result even when the downloaded filing contains numbers.
+    """
     try:
-        return root.xpath("//*[local-name()='nonFraction' or local-name()='fraction']")
+        return root.xpath(
+            "//*[@contextRef and (@unitRef or @unitref)]"
+            "|//*[local-name()='nonFraction' or local-name()='fraction']"
+        )
     except (AttributeError, etree.XPathError):
         return []
 
 
-def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
-    """Parse both XML XBRL and NSE iXBRL HTML filings.
+def _fact_name(elem: Any) -> str:
+    name = elem.get("name")
+    if name:
+        return str(name)
+    tag = getattr(elem, "tag", "unknown")
+    if isinstance(tag, str) and "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    if isinstance(tag, str) and ":" in tag:
+        return tag.rsplit(":", 1)[-1]
+    return str(tag)
 
-    NSE's financial-results catalog can point to iXBRL_WEB.html documents,
-    which are valid HTML rather than XML. The previous ElementTree-only parser
-    therefore returned zero facts even though the filing contained numeric
-    iXBRL facts. Parse HTML with lxml as the primary path and retain an XML
-    fallback for pure XBRL documents.
-    """
+
+def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
+    """Parse numeric facts from both NSE XML XBRL and iXBRL HTML."""
     roots: list[Any] = []
-    try:
-        roots.append(html.fromstring(raw))
-    except (etree.ParserError, ValueError):
-        pass
     try:
         roots.append(etree.fromstring(raw))
     except etree.XMLSyntaxError:
+        pass
+    try:
+        roots.append(html.fromstring(raw))
+    except (etree.ParserError, ValueError):
         pass
 
     facts: list[tuple[str, str, float, str | None]] = []
     seen: set[tuple[str, str, float, str | None]] = set()
     for root in roots:
-        for elem in _ixbrl_elements(root):
+        for elem in _fact_elements(root):
+            # Avoid treating arbitrary HTML attributes as facts unless the
+            # element is explicitly an iXBRL numeric fact or has XBRL context.
+            context = elem.get("contextRef") or elem.get("contextref") or ""
+            unit = elem.get("unitRef") or elem.get("unitref")
+            name = _fact_name(elem)
+            if not context or (not unit and name.lower() not in {"nonfraction", "fraction"}):
+                continue
             text = "".join(elem.itertext()).strip()
             value = parse_numeric(text)
             if value is None:
@@ -144,13 +169,10 @@ def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
             if scale_text:
                 try:
                     value *= 10 ** int(scale_text)
-                except ValueError:
+                except (TypeError, ValueError, OverflowError):
                     continue
             if str(elem.get("sign", "")).strip() == "-":
                 value = -abs(value)
-            name = elem.get("name") or elem.get("format") or "unknown"
-            context = elem.get("contextRef") or elem.get("contextref") or ""
-            unit = elem.get("unitRef") or elem.get("unitref")
             fact = (name, context, value, unit)
             if fact not in seen:
                 seen.add(fact)
