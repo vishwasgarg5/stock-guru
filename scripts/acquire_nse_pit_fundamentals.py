@@ -14,15 +14,15 @@ import csv
 import hashlib
 import io
 import json
+import math
 import re
-import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
 
 import pandas as pd
 import requests
+from lxml import etree, html
 
 NIFTY500_URL = "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv"
 NSE_HOME = "https://www.nseindia.com/"
@@ -88,34 +88,75 @@ def clean_url(value: Any) -> str | None:
 
 
 def parse_numeric(text: str) -> float | None:
-    t = text.strip().replace(",", "")
+    t = text.replace("\xa0", " ").strip().replace(",", "")
+    if not t:
+        return None
+    negative = t.startswith("(") and t.endswith(")")
+    if negative:
+        t = t[1:-1].strip()
+    t = t.replace("−", "-")
     if not re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?", t):
         return None
     try:
         value = float(t)
-        return value if value == value and abs(value) != float("inf") else None
+        if not math.isfinite(value):
+            return None
+        return -value if negative else value
     except ValueError:
         return None
 
 
-def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
+def _ixbrl_elements(root: Any) -> list[Any]:
     try:
-        root = ET.fromstring(raw)
-    except ET.ParseError:
+        return root.xpath("//*[local-name()='nonFraction' or local-name()='fraction']")
+    except (AttributeError, etree.XPathError):
         return []
+
+
+def parse_xbrl(raw: bytes) -> list[tuple[str, str, float, str | None]]:
+    """Parse both XML XBRL and NSE iXBRL HTML filings.
+
+    NSE's financial-results catalog can point to iXBRL_WEB.html documents,
+    which are valid HTML rather than XML. The previous ElementTree-only parser
+    therefore returned zero facts even though the filing contained numeric
+    iXBRL facts. Parse HTML with lxml as the primary path and retain an XML
+    fallback for pure XBRL documents.
+    """
+    roots: list[Any] = []
+    try:
+        roots.append(html.fromstring(raw))
+    except (etree.ParserError, ValueError):
+        pass
+    try:
+        roots.append(etree.fromstring(raw))
+    except etree.XMLSyntaxError:
+        pass
+
     facts: list[tuple[str, str, float, str | None]] = []
-    for elem in root.iter():
-        local = elem.tag.rsplit("}", 1)[-1].lower()
-        if local not in {"nonfraction", "fraction"}:
-            continue
-        text = "".join(elem.itertext()).strip()
-        value = parse_numeric(text)
-        if value is None:
-            continue
-        name = elem.attrib.get("name") or elem.attrib.get("format") or "unknown"
-        context = elem.attrib.get("contextRef") or elem.attrib.get("contextref") or ""
-        unit = elem.attrib.get("unitRef") or elem.attrib.get("unitref")
-        facts.append((name, context, value, unit))
+    seen: set[tuple[str, str, float, str | None]] = set()
+    for root in roots:
+        for elem in _ixbrl_elements(root):
+            text = "".join(elem.itertext()).strip()
+            value = parse_numeric(text)
+            if value is None:
+                continue
+            scale_text = elem.get("scale")
+            if scale_text:
+                try:
+                    value *= 10 ** int(scale_text)
+                except ValueError:
+                    continue
+            if str(elem.get("sign", "")).strip() == "-":
+                value = -abs(value)
+            name = elem.get("name") or elem.get("format") or "unknown"
+            context = elem.get("contextRef") or elem.get("contextref") or ""
+            unit = elem.get("unitRef") or elem.get("unitref")
+            fact = (name, context, value, unit)
+            if fact not in seen:
+                seen.add(fact)
+                facts.append(fact)
+        if facts:
+            break
     return facts
 
 
@@ -169,6 +210,7 @@ def acquire_symbol(symbol: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
                         "xbrl_url": filing_url,
                         "xbrl_sha256": xhash,
                         "xbrl_context_ref": context,
+                        "xbrl_parse_status": "parsed",
                     })
                     records.append(rec)
             else:
@@ -211,7 +253,7 @@ def main() -> int:
             w.writerow(rec)
     manifest = {
         "status": "complete" if not errors and any(s.get("xbrl_documents_with_numeric_facts", 0) for s in stats) else "blocked",
-        "source": "NSE India Financial Results + linked NSE XBRL",
+        "source": "NSE India Financial Results + linked NSE XBRL/iXBRL",
         "nifty500_source_url": NIFTY500_URL,
         "catalog_endpoint": "https://www.nseindia.com/api/corporates-financial-results?index=equities&symbol={symbol}&period=Quarterly",
         "symbols_expected": EXPECTED_COUNT,
