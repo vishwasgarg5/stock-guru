@@ -89,14 +89,15 @@ def build_reverse_event_derived_intervals(anchor_symbols: set[str], events: Iter
     event_dates = sorted({r["effective_date"] for r in rows}, reverse=True)
     post_state: dict[str, set[str]] = {anchor_date: set(active)}
     pre_state: dict[str, set[str]] = {}
-    transition_sources: dict[tuple[str, str], set[str]] = {}
+    transition_sources: dict[str, set[str]] = {}
 
     for effective in event_dates:
         post_state[effective] = set(active)
         batch = [r for r in rows if r["effective_date"] == effective]
+        batch_sources = {r["source_id"].strip() for r in batch}
+        transition_sources[effective] = batch_sources
         for event in reversed(batch):
             symbol = event["symbol"].strip().upper()
-            source_id = event["source_id"].strip()
             if event["action"] == "exclude":
                 if symbol in active:
                     raise ValueError(f"Cannot reverse exclude {symbol}: it is active after {effective}")
@@ -105,34 +106,30 @@ def build_reverse_event_derived_intervals(anchor_symbols: set[str], events: Iter
                 if symbol not in active:
                     raise ValueError(f"Cannot reverse include {symbol}: it is inactive after {effective}")
                 active.remove(symbol)
-            transition_sources.setdefault((effective, symbol), set()).add(source_id)
         pre_state[effective] = set(active)
 
-    # For ascending event dates, the membership immediately before each date is
-    # the reconstructed pre-state; immediately after it is the post-state. This
-    # preserves effective-date semantics even when the anchor itself is an event.
     dates = sorted(set(event_dates) | {anchor_date})
     intervals: list[MembershipInterval] = []
     for idx, left in enumerate(dates):
         right = dates[idx + 1] if idx + 1 < len(dates) else None
-        if left == anchor_date:
-            members = post_state[anchor_date]
+        members = post_state[anchor_date] if left == anchor_date else post_state[left]
+        if left in transition_sources:
+            tier = "EVENT_DERIVED"
+            sources = tuple(sorted(transition_sources[left]))
         else:
-            members = post_state[left]
+            # A standalone captured public snapshot is authoritative for its
+            # anchor date, but does not establish an earlier interval boundary.
+            tier = "CERTIFIED"
+            sources = tuple()
         for symbol in sorted(members):
-            sources = transition_sources.get((left, symbol), set())
-            tier = "EVENT_DERIVED" if sources else "BLOCKED"
-            intervals.append(MembershipInterval(symbol, left, right, tier, tuple(sorted(sources))))
+            intervals.append(MembershipInterval(symbol, left, right, tier, sources))
 
-    # Add the historical segment before the oldest event. Its left edge is not
-    # established by the supplied evidence, so it is intentionally BLOCKED.
     if event_dates:
         oldest = min(event_dates)
         oldest_pre = pre_state[oldest]
-        prior_end = oldest
         prior_start = start_date or "0001-01-01"
         for symbol in sorted(oldest_pre):
-            intervals.append(MembershipInterval(symbol, prior_start, prior_end, "BLOCKED", tuple()))
+            intervals.append(MembershipInterval(symbol, prior_start, oldest, "BLOCKED", tuple()))
 
     return [asdict(i) for i in intervals]
 
