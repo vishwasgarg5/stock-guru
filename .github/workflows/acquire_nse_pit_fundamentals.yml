@@ -43,7 +43,7 @@ jobs:
           PYTHONPATH=scripts python scripts/augment_nse_integrated_filing_facts.py \
             --output data/nse_pit_fundamentals_integrated.csv \
             --manifest data/nse_pit_fundamentals_integrated_manifest.json \
-            --max-workers 2
+            --max-workers 1
       - name: Merge and validate acquired evidence
         run: |
           python - <<'PY'
