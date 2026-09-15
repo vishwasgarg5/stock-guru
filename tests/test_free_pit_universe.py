@@ -34,8 +34,16 @@ def test_reverse_reconstruction_uses_current_snapshot_as_post_event_anchor():
     )
     assert membership_on_date(intervals, "2025-02-01") == {"BBB", "CCC"}
     assert membership_on_date(intervals, "2025-01-31") == {"AAA", "BBB"}
-    assert all(row["evidence_tier"] == "EVENT_DERIVED" for row in intervals)
-    assert {"nse-1"} <= {source for row in intervals for source in row["source_ids"]}
+
+    # The event-supported interval is EVENT_DERIVED.  The interval before
+    # the oldest event is intentionally BLOCKED because no earlier evidence
+    # establishes its start boundary; reverse reconstruction must fail closed.
+    derived = [row for row in intervals if row["evidence_tier"] == "EVENT_DERIVED"]
+    blocked = [row for row in intervals if row["evidence_tier"] == "BLOCKED"]
+    assert derived
+    assert all("nse-1" in row["source_ids"] for row in derived)
+    assert blocked
+    assert all(not row["source_ids"] for row in blocked)
 
 
 def test_reverse_reconstruction_fails_closed_on_contradictory_anchor():
