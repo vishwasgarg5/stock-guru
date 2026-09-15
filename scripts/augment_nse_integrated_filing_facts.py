@@ -11,6 +11,8 @@ import csv
 import hashlib
 import io
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -35,6 +37,7 @@ FIELDS = [
     "period_metadata_json", "xbrl_url", "xbrl_sha256", "xbrl_context_ref",
     "xbrl_parse_status",
 ]
+_THREAD = threading.local()
 
 
 def first(row: dict[str, Any], *names: str) -> Any:
@@ -65,10 +68,34 @@ def session() -> requests.Session:
     return s
 
 
+def worker_session() -> requests.Session:
+    s = getattr(_THREAD, "session", None)
+    if s is None:
+        s = session()
+        _THREAD.session = s
+    return s
+
+
+def get_with_retry(s: requests.Session, url: str, **kwargs: Any) -> requests.Response:
+    last: Exception | None = None
+    for attempt in range(4):
+        try:
+            r = s.get(url, **kwargs)
+            if r.status_code not in {403, 429, 500, 502, 503, 504}:
+                r.raise_for_status()
+                return r
+            last = requests.HTTPError(f"HTTP {r.status_code} for {url}")
+        except requests.RequestException as exc:
+            last = exc
+        time.sleep(min(2 ** attempt, 8))
+    if last:
+        raise last
+    raise RuntimeError(f"request failed: {url}")
+
+
 def symbols() -> list[str]:
     s = session()
-    r = s.get(NIFTY500_URL, headers={**HEADERS, "Referer": "https://www.niftyindices.com/"}, timeout=60)
-    r.raise_for_status()
+    r = get_with_retry(s, NIFTY500_URL, headers={**HEADERS, "Referer": "https://www.niftyindices.com/"}, timeout=60)
     df = pd.read_csv(io.BytesIO(r.content))
     col = next(c for c in df.columns if str(c).strip().upper() == "SYMBOL")
     out = sorted({str(x).strip().upper() for x in df[col].dropna() if str(x).strip()})
@@ -85,10 +112,10 @@ def normalize(payload: Any) -> list[dict[str, Any]]:
     return [x for x in payload if isinstance(x, dict)] if isinstance(payload, list) else []
 
 
-def fetch_symbol(s: requests.Session, symbol: str) -> tuple[list[dict[str, Any]], int]:
+def fetch_symbol(symbol: str) -> tuple[list[dict[str, Any]], int]:
+    s = worker_session()
     params = {"index": "equities", "symbol": symbol, "type": "Integrated Filing- Financials", "page": 1, "size": 100}
-    r = s.get(INTEGRATED, params=params, timeout=60)
-    r.raise_for_status()
+    r = get_with_retry(s, INTEGRATED, params=params, timeout=60)
     catalog_hash = sha256_bytes(r.content)
     rows = normalize(r.json())
     records: list[dict[str, Any]] = []
@@ -117,8 +144,7 @@ def fetch_symbol(s: requests.Session, symbol: str) -> tuple[list[dict[str, Any]]
             "period_metadata_json": json.dumps(row, sort_keys=True, default=str),
         }
         try:
-            xr = s.get(filing_url, timeout=60)
-            xr.raise_for_status()
+            xr = get_with_retry(s, filing_url, timeout=60)
             xhash = sha256_bytes(xr.content)
             facts = parse_xbrl(xr.content)
         except requests.RequestException:
@@ -143,17 +169,19 @@ def main() -> int:
     syms = symbols()
     all_records: list[dict[str, Any]] = []
     stats: dict[str, int] = {}
+    errors: dict[str, str] = {}
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as pool:
-        futures = {pool.submit(fetch_symbol, session(), sym): sym for sym in syms}
+        futures = {pool.submit(fetch_symbol, sym): sym for sym in syms}
         for i, f in enumerate(concurrent.futures.as_completed(futures), 1):
             sym = futures[f]
             try:
                 rows, docs = f.result()
                 all_records.extend(rows)
                 stats[sym] = docs
-            except Exception:
+            except Exception as exc:
                 stats[sym] = 0
+                errors[sym] = f"{type(exc).__name__}: {exc}"
             if i % 25 == 0:
                 print(f"integrated processed {i}/{len(syms)}")
 
@@ -165,7 +193,7 @@ def main() -> int:
             w.writerow(rec)
 
     manifest = {
-        "status": "complete" if len(stats) == EXPECTED_COUNT and sum(v > 0 for v in stats.values()) > 0 else "blocked",
+        "status": "complete" if len(stats) == EXPECTED_COUNT and not errors and sum(v > 0 for v in stats.values()) > 0 else "blocked",
         "source": "NSE India Integrated Filing Financials + linked NSE XBRL/iXBRL",
         "endpoint": INTEGRATED,
         "symbols_expected": EXPECTED_COUNT,
@@ -173,6 +201,7 @@ def main() -> int:
         "records": len(all_records),
         "symbols_with_xbrl_numeric_facts": sum(v > 0 for v in stats.values()),
         "symbols_without_numeric_facts": [s for s, v in sorted(stats.items()) if v == 0],
+        "errors": errors,
         "policy": "Missing publication evidence or unavailable filings remain BLOCKED; no synthetic values are permitted.",
     }
     args.manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
