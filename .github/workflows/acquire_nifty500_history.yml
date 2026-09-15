@@ -1,0 +1,36 @@
+name: Acquire Official NIFTY 500 History
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  acquire:
+    if: >-
+      !startsWith(github.event.head_commit.message, 'Capture official NIFTY 500 history')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - run: |
+          python scripts/acquire_nifty500_official_history.py \
+            --output data/nifty500_official_history.csv \
+            --manifest data/nifty500_official_history_manifest.csv
+      - name: Commit captured primary evidence
+        run: |
+          if git diff --quiet -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv; then
+            echo "No evidence changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
+          git commit -m "Capture official NIFTY 500 history"
+          git push
