@@ -23,16 +23,35 @@ jobs:
           python scripts/acquire_nifty500_official_history.py \
             --output data/nifty500_official_history.csv \
             --manifest data/nifty500_official_history_manifest.csv
+      - name: Validate captured evidence
+        run: |
+          set -euo pipefail
+          test -s data/nifty500_official_history.csv
+          test -s data/nifty500_official_history_manifest.csv
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          p = Path('data/nifty500_official_history.csv')
+          rows = list(csv.DictReader(p.open(encoding='utf-8')))
+          if not rows:
+              raise SystemExit('Captured NIFTY 500 history is empty')
+          required = {'Index Name', 'Event Date', 'Scrip Name', 'Description'}
+          if not required.issubset(rows[0]):
+              raise SystemExit(f'Missing required columns: {required - set(rows[0])}')
+          nifty = [r for r in rows if str(r['Index Name']).strip().lower() == 'nifty 500']
+          if not nifty:
+              raise SystemExit('Captured workbook contains no NIFTY 500 rows')
+          print(f'Validated {len(nifty)} NIFTY 500 historical event rows')
+          PY
       - name: Commit captured primary evidence
         run: |
           set -euo pipefail
-          git status --short -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
-          if git status --porcelain -- data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv | grep -q .; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
-            git commit -m "Capture official NIFTY 500 history"
-            git push origin HEAD:main
-          else
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/nifty500_official_history.csv data/nifty500_official_history_manifest.csv
+          if git diff --cached --quiet; then
             echo "No evidence changes"
+            exit 0
           fi
+          git commit -m "Capture official NIFTY 500 history"
+          git push origin HEAD:main
